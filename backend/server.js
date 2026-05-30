@@ -60,6 +60,7 @@ const supabaseKey = process.env.SUPABASE_KEY;
 
 let tgClient = null;
 let supabase = null;
+let supabaseInitError = null;
 
 // Initialize Supabase
 if (supabaseUrl && supabaseKey) {
@@ -67,6 +68,7 @@ if (supabaseUrl && supabaseKey) {
     supabase = createClient(supabaseUrl, supabaseKey);
     console.log("Supabase Client initialized successfully!");
   } catch (err) {
+    supabaseInitError = err.message || err.toString();
     console.error("Failed to initialize Supabase client:", err);
   }
 }
@@ -799,6 +801,12 @@ app.post("/listings/resolve", async (req, res) => {
 
 // Health check endpoint
 app.get("/health", (req, res) => {
+  const maskString = (str) => {
+    if (!str) return "not-set";
+    if (str === "undefined" || str === "null") return `literal-${str}`;
+    if (str.length <= 8) return "***";
+    return str.substring(0, 4) + "..." + str.substring(str.length - 4);
+  };
 
   res.json({
     status: "healthy",
@@ -806,6 +814,10 @@ app.get("/health", (req, res) => {
     supabase_configured: !!process.env.SUPABASE_URL,
     supabase_key_configured: !!process.env.SUPABASE_KEY,
     supabase_key_length: process.env.SUPABASE_KEY ? process.env.SUPABASE_KEY.length : 0,
+    supabase_client_initialized: supabase !== null,
+    supabase_init_error: supabaseInitError,
+    supabase_url_val: maskString(process.env.SUPABASE_URL),
+    supabase_key_val: maskString(process.env.SUPABASE_KEY),
     tmdb_configured: !!process.env.TMDB_API_KEY,
   });
 });
