@@ -5,7 +5,7 @@
 # ==========================================================
 
 # --- Stage 1: Build & Dependency Resolution ---
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 # Create app directory
 WORKDIR /usr/src/app
@@ -17,7 +17,7 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 # --- Stage 2: Production Runtime ---
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Set secure environment variables
 ENV NODE_ENV=production
