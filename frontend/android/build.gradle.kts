@@ -19,6 +19,33 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+subprojects {
+    plugins.withId("com.android.library") {
+        val android = extensions.findByName("android")
+        if (android != null) {
+            val ext = (android as? org.gradle.api.plugins.ExtensionAware)?.extensions?.findByName("ext") as? org.gradle.api.plugins.ExtraPropertiesExtension
+            ext?.set("flutter", mapOf(
+                "compileSdkVersion" to 34,
+                "minSdkVersion" to 21,
+                "targetSdkVersion" to 34
+            ))
+        }
+    }
+    plugins.withId("com.android.application") {
+        val android = extensions.findByName("android")
+        if (android != null) {
+            val ext = (android as? org.gradle.api.plugins.ExtensionAware)?.extensions?.findByName("ext") as? org.gradle.api.plugins.ExtraPropertiesExtension
+            if (ext != null && !ext.has("flutter")) {
+                ext.set("flutter", mapOf(
+                    "compileSdkVersion" to 34,
+                    "minSdkVersion" to 21,
+                    "targetSdkVersion" to 34
+                ))
+            }
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
