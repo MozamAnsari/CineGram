@@ -1,0 +1,42 @@
+name: cinegram
+description: "Cinegram - A premium cinema and short-form social movie sharing application featuring a luxurious glassmorphic dark interface."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Premium Fonts & Icons
+  google_fonts: ^6.1.0
+  cupertino_icons: ^1.0.6
+
+  # State Management
+  provider: ^6.1.2
+
+  # Networking & API
+  dio: ^5.4.0
+  shared_preferences: ^2.2.2
+
+  # Advanced UI & Image Caching
+  cached_network_image: ^3.3.1
+  flutter_blurhash: ^0.8.2
+  shimmer: ^3.0.0
+  flutter_spinkit: ^5.2.0
+
+  # Video Playback Components
+  video_player: ^2.8.2
+  media_kit: ^1.1.10
+  media_kit_video: ^1.1.10
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

@@ -1,0 +1,1887 @@
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import '../models/media_item.dart';
+import '../widgets/glassmorphic_card.dart';
+import '../services/api_service.dart';
+import '../services/external_player_service.dart';
+import 'details.dart';
+import 'search.dart';
+import 'tv_home.dart';
+import 'profile_select.dart';
+import 'package:provider/provider.dart';
+import '../theme/cinegram_theme.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({Key? key}) : super(key: key);
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+  late MediaItem _featuredItem;
+  final ScrollController _mainScrollController = ScrollController();
+  double _scrollOpacity = 0.0;
+  String _activeAvatarUrl = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150';
+
+  // Dynamic cloud live sync rows
+  List<MediaItem> _dynamicContinueWatching = [];
+  List<MediaItem> _dynamicMovies = [];
+  List<MediaItem> _dynamicTvShows = [];
+  List<MediaItem> _dynamicAnime = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _featuredItem = mockMediaDatabase.firstWhere((item) => item.category == 'Trending');
+    
+    // Seed initial row lists with static mocks for immediate display
+    _dynamicContinueWatching = mockMediaDatabase.where((item) => item.progress != null).toList();
+    _dynamicMovies = mockMediaDatabase.where((item) => item.type == 'Movie').toList();
+    _dynamicTvShows = mockMediaDatabase.where((item) => item.type == 'TV Show').toList();
+    _dynamicAnime = mockMediaDatabase.where((item) => item.type == 'Anime').toList();
+
+    _loadActiveProfileAvatar();
+    _loadCloudData();
+    
+    _mainScrollController.addListener(() {
+      double offset = _mainScrollController.offset;
+      double newOpacity = (offset / 250).clamp(0.0, 1.0);
+      if (newOpacity != _scrollOpacity) {
+        setState(() {
+          _scrollOpacity = newOpacity;
+        });
+      }
+    });
+  }
+
+  Future<void> _loadCloudData() async {
+    try {
+      final continueWatching = await ApiService.fetchSyncedContinueWatchingItems();
+      final allListings = await ApiService.fetchMediaItems();
+
+      if (mounted) {
+        setState(() {
+          if (continueWatching.isNotEmpty) {
+            _dynamicContinueWatching = continueWatching;
+          }
+          if (allListings.isNotEmpty) {
+            final fetchedMovies = allListings.where((item) => item.type == 'Movie').toList();
+            final fetchedTv = allListings.where((item) => item.type == 'TV Show').toList();
+            final fetchedAnime = allListings.where((item) => item.type == 'Anime').toList();
+            
+            if (fetchedMovies.isNotEmpty) _dynamicMovies = fetchedMovies;
+            if (fetchedTv.isNotEmpty) _dynamicTvShows = fetchedTv;
+            if (fetchedAnime.isNotEmpty) _dynamicAnime = fetchedAnime;
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadActiveProfileAvatar() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final activeProfile = ApiService.activeProfile ?? 'Viewer';
+      
+      final roles = ['Director', 'Producer', 'Critic', 'Viewer'];
+      String? foundRole;
+      for (final role in roles) {
+        final savedName = prefs.getString('profile_name_$role') ?? role;
+        if (savedName == activeProfile) {
+          foundRole = role;
+          break;
+        }
+      }
+      
+      final roleKey = foundRole ?? 'Viewer';
+      final savedAvatar = prefs.getString('profile_avatar_$roleKey');
+      if (savedAvatar != null && savedAvatar.isNotEmpty) {
+        setState(() {
+          _activeAvatarUrl = savedAvatar;
+        });
+      } else {
+        final defaultAvatars = {
+          'Director': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150',
+          'Producer': 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?q=80&w=150',
+          'Critic': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=150',
+          'Viewer': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150',
+        };
+        setState(() {
+          _activeAvatarUrl = defaultAvatars[roleKey]!;
+        });
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _mainScrollController.dispose();
+    super.dispose();
+  }
+
+  void _updateFeaturedItem(MediaItem item) {
+    setState(() {
+      _featuredItem = item;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    
+    // Separate database by types dynamically
+    final movies = _dynamicMovies;
+    final tvShows = _dynamicTvShows;
+    final anime = _dynamicAnime;
+    final continueWatching = _dynamicContinueWatching;
+
+    return Scaffold(
+      body: Stack(
+        children: [
+          // Main scrollable content
+          SingleChildScrollView(
+            controller: _mainScrollController,
+            physics: const BouncingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 1. DYNAMIC FEATURED BACKDROP BANNER
+                _buildFeaturedBanner(size),
+
+                const SizedBox(height: 24.0),
+
+                // 2. CONTINUE WATCHING ROW (with progress lines)
+                if (continueWatching.isNotEmpty) ...[
+                  _buildSectionHeader("Continue Watching", isGold: true),
+                  _buildContinueWatchingRow(continueWatching),
+                  const SizedBox(height: 32.0),
+                ],
+
+                // 3. MOVIES ROW
+                _buildSectionHeader("Cinematic Masterpieces (Movies)"),
+                _buildMediaRow(movies),
+                const SizedBox(height: 32.0),
+
+                // 4. TV SHOWS ROW
+                _buildSectionHeader("Top-Tier Series (TV Shows)"),
+                _buildMediaRow(tvShows),
+                const SizedBox(height: 32.0),
+
+                // 5. ANIME ROW
+                _buildSectionHeader("Vivid Dimensions (Anime)"),
+                _buildMediaRow(anime),
+                
+                // Bottom padding
+                const SizedBox(height: 120.0),
+              ],
+            ),
+          ),
+
+          // GLASSMORPHIC TOP APP BAR
+          _buildFloatingAppBar(context),
+        ],
+      ),
+    );
+  }
+
+  // FLOATING PREMIUM APP BAR WITH DYNAMIC SCROLL TRANSITION
+  Widget _buildFloatingAppBar(BuildContext context) {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        height: 100.0,
+        padding: const EdgeInsets.only(top: 40.0, left: 20.0, right: 20.0),
+        color: const Color(0xFF070708).withOpacity(_scrollOpacity * 0.95),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Elegant Brand Logo
+            Row(
+              children: [
+                Text(
+                  "CINE",
+                  style: GoogleFonts.cinzel(
+                    fontSize: 24.0,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: 2.0,
+                  ),
+                ),
+                Text(
+                  "GRAM",
+                  style: GoogleFonts.cinzel(
+                    fontSize: 24.0,
+                    fontWeight: FontWeight.w900,
+                    color: Theme.of(context).primaryColor,
+                    letterSpacing: 2.0,
+                  ),
+                ),
+              ],
+            ),
+            
+            // Search & Profile action buttons
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      PageRouteBuilder(
+                        pageBuilder: (context, animation, secondaryAnimation) => const TvHomeScreen(),
+                        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                          return FadeTransition(opacity: animation, child: child);
+                        },
+                      ),
+                    );
+                  },
+                  icon: Icon(Icons.tv_rounded, size: 28.0, color: Theme.of(context).primaryColor),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white.withOpacity(0.08),
+                    padding: const EdgeInsets.all(10.0),
+                  ),
+                ),
+                const SizedBox(width: 12.0),
+                IconButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      PageRouteBuilder(
+                        pageBuilder: (context, animation, secondaryAnimation) => const SearchScreen(),
+                        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                          return FadeTransition(opacity: animation, child: child);
+                        },
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.search_rounded, size: 28.0, color: Colors.white),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white.withOpacity(0.08),
+                    padding: const EdgeInsets.all(10.0),
+                  ),
+                ),
+                const SizedBox(width: 12.0),
+                GestureDetector(
+                  onTap: () => _showServerSettingsBottomSheet(context),
+                  child: Container(
+                    width: 38.0,
+                    height: 38.0,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Theme.of(context).primaryColor, width: 1.5),
+                      image: DecorationImage(
+                        image: CachedNetworkImageProvider(_activeAvatarUrl),
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  // DYNAMIC BACKDROP BANNER WIDGET
+  Widget _buildFeaturedBanner(Size size) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 600),
+      transitionBuilder: (Widget child, Animation<double> animation) {
+        return FadeTransition(opacity: animation, child: child);
+      },
+      child: Container(
+        key: ValueKey<String>(_featuredItem.id),
+        height: size.height * 0.62,
+        width: double.infinity,
+        child: Stack(
+          children: [
+            // Backdrop Image with fallback
+            Positioned.fill(
+              child: CachedNetworkImage(
+                imageUrl: _featuredItem.backdropUrl,
+                fit: BoxFit.cover,
+                placeholder: (context, url) => Container(
+                  color: const Color(0xFF121215),
+                  child: const Center(
+                    child: CircularProgressIndicator(color: Color(0xFFFFD700)),
+                  ),
+                ),
+                errorWidget: (context, url, error) => Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFF0F0F12), Color(0xFF1E1E24)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // Layered Luxury Gradient Overlays (Top, Bottom, Ambient Side Glow)
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.black87,
+                      Colors.transparent,
+                      Colors.transparent,
+                      Color(0xFF070708), // Scaffolds BG color
+                    ],
+                    stops: [0.0, 0.3, 0.7, 1.0],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                ),
+              ),
+            ),
+            
+            // Soft left gradient for text readability
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.black.withOpacity(0.8),
+                      Colors.black.withOpacity(0.4),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.4, 1.0],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                ),
+              ),
+            ),
+
+            // Featured Details Text & Action CTA
+            Positioned(
+              bottom: 20.0,
+              left: 20.0,
+              right: 20.0,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Gold pill Category indicator
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 4.0),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20.0),
+                      border: Border.all(color: Theme.of(context).primaryColor.withOpacity(0.4), width: 0.8),
+                    ),
+                    child: Text(
+                      "FEATURED ${_featuredItem.type.toUpperCase()}",
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9.0,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).primaryColor,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12.0),
+
+                  // Title
+                  Text(
+                    _featuredItem.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.cinzel(
+                      fontSize: 32.0,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      height: 1.1,
+                      shadows: [
+                        const Shadow(
+                          color: Colors.black54,
+                          offset: Offset(0, 3),
+                          blurRadius: 10.0,
+                        )
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8.0),
+
+                  // Ratings, Year, Duration Metadata Row
+                  Row(
+                    children: [
+                      Icon(Icons.star_rounded, color: Theme.of(context).primaryColor, size: 16.0),
+                      const SizedBox(width: 4.0),
+                      Text(
+                        _featuredItem.rating.toString(),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          fontSize: 13.0,
+                        ),
+                      ),
+                      const SizedBox(width: 12.0),
+                      _buildMetadataDot(),
+                      const SizedBox(width: 12.0),
+                      Text(
+                        _featuredItem.year,
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.white70,
+                          fontSize: 13.0,
+                        ),
+                      ),
+                      const SizedBox(width: 12.0),
+                      _buildMetadataDot(),
+                      const SizedBox(width: 12.0),
+                      Text(
+                        _featuredItem.duration,
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.white70,
+                          fontSize: 13.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12.0),
+
+                  // Mini Synopsis description
+                  Text(
+                    _featuredItem.synopsis,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                      color: Colors.white70,
+                      fontSize: 12.5,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 20.0),
+
+                  // Buttons
+                  Row(
+                    children: [
+                      // Massive Glassmorphic Play button
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              PageRouteBuilder(
+                                pageBuilder: (context, animation, secondaryAnimation) =>
+                                    DetailsScreen(mediaItem: _featuredItem),
+                                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                  return FadeTransition(opacity: animation, child: child);
+                                },
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.play_arrow_rounded, color: Colors.black, size: 28.0),
+                          label: Text(
+                            "Watch Now",
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14.0,
+                              color: Colors.black,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).primaryColor,
+                            elevation: 8,
+                            shadowColor: Theme.of(context).primaryColor.withOpacity(0.3),
+                            padding: const EdgeInsets.symmetric(vertical: 14.0),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14.0),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12.0),
+
+                      // Info Glass button
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            PageRouteBuilder(
+                              pageBuilder: (context, animation, secondaryAnimation) =>
+                                  DetailsScreen(mediaItem: _featuredItem),
+                              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                return FadeTransition(opacity: animation, child: child);
+                              },
+                            ),
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(14.0),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(14.0),
+                            border: Border.all(color: Colors.white.withOpacity(0.15)),
+                          ),
+                          child: const Icon(Icons.info_outline_rounded, color: Colors.white, size: 24.0),
+                        ),
+                      ),
+                    ],
+                  )
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMetadataDot() {
+    return Container(
+      width: 4.0,
+      height: 4.0,
+      decoration: const BoxDecoration(
+        color: Colors.white30,
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+
+  // SECTION HEADER WITH DYNAMIC ACCENTS
+  Widget _buildSectionHeader(String title, {bool isGold = false}) {
+    final primaryColor = Theme.of(context).primaryColor;
+    return Padding(
+      padding: const EdgeInsets.only(left: 20.0, bottom: 14.0, right: 20.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 18.0,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.2,
+              color: isGold ? primaryColor : Colors.white,
+            ),
+          ),
+          Text(
+            "See All",
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 12.0,
+              fontWeight: FontWeight.w600,
+              color: primaryColor.withOpacity(0.8),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // CONTINUE WATCHING ROW (HORIZONTAL INTERACTIVE PROGRESS LINES)
+  Widget _buildContinueWatchingRow(List<MediaItem> list) {
+    return Container(
+      height: 170.0,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20.0),
+        itemCount: list.length,
+        itemBuilder: (context, index) {
+          final item = list[index];
+          return Container(
+            margin: const EdgeInsets.only(right: 16.0),
+            width: 240.0,
+            child: GlassmorphicCard(
+              padding: EdgeInsets.zero,
+              borderRadius: 16.0,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  PageRouteBuilder(
+                    pageBuilder: (context, animation, secondaryAnimation) =>
+                        DetailsScreen(mediaItem: item),
+                    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                      return FadeTransition(opacity: animation, child: child);
+                    },
+                  ),
+                );
+              },
+              child: Stack(
+                children: [
+                  // Backdrop image
+                  Positioned.fill(
+                    child: CachedNetworkImage(
+                      imageUrl: item.backdropUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(color: Colors.white.withOpacity(0.04)),
+                      errorWidget: (context, url, error) => Container(color: Colors.grey[900]),
+                    ),
+                  ),
+
+                  // Bottom dark overlay gradient
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.black.withOpacity(0.85),
+                            Colors.black.withOpacity(0.2),
+                            Colors.transparent,
+                          ],
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Title and Episode Metadata
+                  Positioned(
+                    bottom: 15.0,
+                    left: 12.0,
+                    right: 12.0,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14.0,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 2.0),
+                        Text(
+                          item.type == 'TV Show' ? 'S2:E3 • Remaining' : 'Movie • Resume',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10.5,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Play overlay circle
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(8.0),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.black.withOpacity(0.6),
+                        border: Border.all(color: Colors.white30),
+                      ),
+                      child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 24.0),
+                    ),
+                  ),
+
+                  // PROGRESS LINE (UNDER CARD SURFACE)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      height: 4.0,
+                      color: Colors.white.withOpacity(0.2),
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: item.progress ?? 0.0,
+                        child: Container(
+                          height: 4.0,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Theme.of(context).primaryColor,
+                                Theme.of(context).primaryColor.withOpacity(0.6),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // STANDARD MOVIE ROW WITH CARD HOVER TRANSITIONS
+  Widget _buildMediaRow(List<MediaItem> list) {
+    return Container(
+      height: 230.0,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20.0),
+        itemCount: list.length,
+        itemBuilder: (context, index) {
+          final item = list[index];
+          return Container(
+            margin: const EdgeInsets.only(right: 14.0),
+            width: 140.0,
+            child: GestureDetector(
+              onDoubleTap: () => _updateFeaturedItem(item), // Dynamic updates backdrop!
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Poster Card
+                  Expanded(
+                    child: GlassmorphicCard(
+                      padding: EdgeInsets.zero,
+                      borderRadius: 16.0,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          PageRouteBuilder(
+                            pageBuilder: (context, animation, secondaryAnimation) =>
+                                DetailsScreen(mediaItem: item),
+                            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                              return FadeTransition(opacity: animation, child: child);
+                            },
+                          ),
+                        );
+                      },
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: Hero(
+                              tag: 'poster_${item.id}',
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16.0),
+                                child: CachedNetworkImage(
+                                  imageUrl: item.posterUrl,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(
+                                    color: Colors.white.withOpacity(0.04),
+                                    child: const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Color(0xFFFFD700),
+                                        strokeWidth: 1.5,
+                                      ),
+                                    ),
+                                  ),
+                                  errorWidget: (context, url, error) => Container(
+                                    decoration: const BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [Color(0xFF1E1E24), Color(0xFF0F0F12)],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          
+                          // Glass rating indicator in top corner
+                          Positioned(
+                            top: 8.0,
+                            right: 8.0,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8.0),
+                              child: BackdropFilter(
+                                filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6.0, vertical: 3.0),
+                                  color: Colors.black.withOpacity(0.6),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.star_rounded, color: Theme.of(context).primaryColor, size: 12.0),
+                                      const SizedBox(width: 2.0),
+                                      Text(
+                                        item.rating.toString(),
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 9.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8.0),
+ 
+                  // Title
+                  Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13.0,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2.0),
+ 
+                  // Meta details
+                  Row(
+                    children: [
+                      Text(
+                        item.year,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10.5,
+                          color: Colors.white70,
+                        ),
+                      ),
+                      const SizedBox(width: 6.0),
+                      Container(
+                        width: 3.0,
+                        height: 3.0,
+                        decoration: const BoxDecoration(
+                          color: Colors.white30,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6.0),
+                      Text(
+                        item.type,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10.5,
+                          color: Theme.of(context).primaryColor.withOpacity(0.8),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showServerSettingsBottomSheet(BuildContext context) {
+    final TextEditingController urlController = TextEditingController(text: ApiService.baseUrl);
+    final TextEditingController m3uController = TextEditingController();
+    final TextEditingController epgController = TextEditingController();
+    final TextEditingController hexColorController = TextEditingController();
+    
+    final Map<String, TextEditingController> nameControllers = {
+      'Director': TextEditingController(),
+      'Producer': TextEditingController(),
+      'Critic': TextEditingController(),
+      'Viewer': TextEditingController(),
+    };
+    
+    final Map<String, TextEditingController> avatarControllers = {
+      'Director': TextEditingController(),
+      'Producer': TextEditingController(),
+      'Critic': TextEditingController(),
+      'Viewer': TextEditingController(),
+    };
+
+    bool? isConnected;
+    bool isChecking = false;
+
+    bool useExternalPlayer = false;
+    String selectedPlayerPackage = 'android.intent.action.VIEW';
+    String selectedPlayerName = 'System Default Player';
+
+    // Load pre-configured IPTV URLs and profile parameters
+    SharedPreferences.getInstance().then((prefs) {
+      m3uController.text = prefs.getString('iptv_m3u_url') ?? 'https://cinegram.io/playlist.m3u';
+      epgController.text = prefs.getString('iptv_epg_url') ?? 'http://cinegram.io/epg.xml';
+      useExternalPlayer = prefs.getBool('use_external_player') ?? false;
+      selectedPlayerPackage = prefs.getString('selected_external_player_package') ?? 'android.intent.action.VIEW';
+      selectedPlayerName = prefs.getString('selected_external_player_name') ?? 'System Default Player';
+      
+      final roles = ['Director', 'Producer', 'Critic', 'Viewer'];
+      for (final role in roles) {
+        nameControllers[role]!.text = prefs.getString('profile_name_$role') ?? role;
+        avatarControllers[role]!.text = prefs.getString('profile_avatar_$role') ?? '';
+      }
+    });
+
+    // Helper function to test connection in bottom sheet
+    Future<void> checkConnection(StateSetter setSheetState, String url) async {
+      setSheetState(() {
+        isChecking = true;
+      });
+      final status = await ApiService.testConnection(url);
+      setSheetState(() {
+        isConnected = status;
+        isChecking = false;
+      });
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.6),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final themeProvider = Provider.of<ThemeProvider>(context);
+            final primaryColor = Theme.of(context).primaryColor;
+            
+            final statusColor = isChecking
+                ? Colors.amber
+                : (isConnected == true
+                    ? Colors.greenAccent
+                    : (isConnected == false ? Colors.redAccent : Colors.grey));
+            final statusText = isChecking
+                ? "Testing link..."
+                : (isConnected == true
+                    ? "Server Connected"
+                    : (isConnected == false ? "Server Offline" : "Status Unknown"));
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(30.0)),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F0F12).withOpacity(0.95),
+                      border: Border(
+                        top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1.5),
+                      ),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Indicator handle
+                        Center(
+                          child: Container(
+                            width: 48.0,
+                            height: 4.5,
+                            decoration: BoxDecoration(
+                              color: Colors.white24,
+                              borderRadius: BorderRadius.circular(10.0),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 24.0),
+                        
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              "SETTINGS",
+                              style: GoogleFonts.cinzel(
+                                fontSize: 24.0,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close_rounded, color: Colors.white60),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16.0),
+                        
+                        // Profile Switcher Section
+                        Text(
+                          "CURRENT ACTIVE PROFILE",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.06),
+                                    borderRadius: BorderRadius.circular(8.0),
+                                    border: Border.all(color: Colors.white12),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.account_circle, color: primaryColor, size: 20),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        ApiService.activeProfile ?? "Viewer",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14.0,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.pop(context); // Close bottom sheet
+                                Navigator.of(context).pushAndRemoveUntil(
+                                  MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
+                                  (route) => false,
+                                );
+                              },
+                              icon: const Icon(Icons.swap_horiz, color: Colors.black, size: 18),
+                              label: Text(
+                                "Switch Profile",
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black,
+                                  fontSize: 12.0,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryColor,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10.0),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24.0),
+                        const Divider(color: Colors.white12, height: 1.0),
+                        const SizedBox(height: 24.0),
+
+                        // Theme Switcher Section
+                        Text(
+                          "VISUAL ACCENT THEME",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          "Select a premium primary accent color preset for customized glows, borders, and visual theme highlighting.",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white60,
+                            fontSize: 12.0,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 16.0),
+                        
+                        // Custom Circular Chips
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: AccentPreset.values.map((preset) {
+                            final bool isSelected = themeProvider.currentPreset == preset;
+                            return GestureDetector(
+                              onTap: () {
+                                themeProvider.setPreset(preset);
+                                
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      "Visual theme accent changed to ${preset.name}!",
+                                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                    ),
+                                    backgroundColor: preset.color.withOpacity(0.95),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              },
+                              child: Column(
+                                children: [
+                                  AnimatedContainer(
+                                    duration: const Duration(milliseconds: 250),
+                                    width: 48.0,
+                                    height: 48.0,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: preset.color,
+                                      border: Border.all(
+                                        color: isSelected ? Colors.white : Colors.transparent,
+                                        width: 3.0,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: preset.color.withOpacity(0.4),
+                                          blurRadius: isSelected ? 12.0 : 4.0,
+                                          spreadRadius: isSelected ? 3.0 : 0.0,
+                                        ),
+                                      ],
+                                    ),
+                                    child: isSelected
+                                        ? const Icon(
+                                            Icons.check_rounded,
+                                            color: Colors.black,
+                                            size: 24.0,
+                                          )
+                                        : null,
+                                  ),
+                                  const SizedBox(height: 8.0),
+                                  Text(
+                                    preset.name.split(' ').first,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: isSelected ? preset.color : Colors.white60,
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      fontSize: 11.0,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 20.0),
+                        
+                        // CUSTOM ACCENT HEX INPUT ROW
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.04),
+                                  borderRadius: BorderRadius.circular(12.0),
+                                  border: Border.all(color: Colors.white12),
+                                ),
+                                padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 2.0),
+                                child: TextField(
+                                  controller: hexColorController,
+                                  style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
+                                  onChanged: (val) {
+                                    setSheetState(() {});
+                                  },
+                                  decoration: InputDecoration(
+                                    labelText: "Custom Color Hex",
+                                    labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                                    hintText: "e.g., #FF2E93 or F57C00",
+                                    hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
+                                    border: InputBorder.none,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12.0),
+                            // Realtime Glowing Preview Circle & Save Button
+                            GestureDetector(
+                              onTap: () async {
+                                final hex = hexColorController.text.trim();
+                                if (hex.isNotEmpty) {
+                                  final success = await themeProvider.setCustomHexColor(hex);
+                                  if (success) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          "Custom accent color set successfully!",
+                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                        ),
+                                        backgroundColor: themeProvider.accentColor,
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text("Invalid Hex color format. Use #RRGGBB"),
+                                        backgroundColor: Colors.redAccent,
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  await themeProvider.clearCustomColor();
+                                }
+                                setSheetState(() {});
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 250),
+                                width: 44.0,
+                                height: 44.0,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor,
+                                  border: Border.all(color: Colors.white24, width: 1.5),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: (ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor).withOpacity(0.4),
+                                      blurRadius: 10.0,
+                                      spreadRadius: 2.0,
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(Icons.colorize_rounded, color: Colors.black, size: 20.0),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 24.0),
+                        const Divider(color: Colors.white12, height: 1.0),
+                        const SizedBox(height: 24.0),
+
+                        // PROFILE AVATARS & DETAILS SECTION
+                        Text(
+                          "PROFILE AVATARS & DETAILS",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          "Customize profile names and avatar photo URLs (Unsplash links supported). Leave avatar blank to reset to defaults.",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white60,
+                            fontSize: 12.0,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 16.0),
+
+                        Column(
+                          children: ['Director', 'Producer', 'Critic', 'Viewer'].map((role) {
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 12.0),
+                              padding: const EdgeInsets.all(12.0),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.02),
+                                borderRadius: BorderRadius.circular(14.0),
+                                border: Border.all(color: Colors.white.withOpacity(0.06)),
+                              ),
+                              child: Row(
+                                children: [
+                                  // Miniature preview thumbnail
+                                  Container(
+                                    width: 44.0,
+                                    height: 44.0,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: primaryColor.withOpacity(0.4), width: 1.5),
+                                      image: DecorationImage(
+                                        image: CachedNetworkImageProvider(
+                                          avatarControllers[role]!.text.trim().isNotEmpty
+                                              ? avatarControllers[role]!.text.trim()
+                                              : (role == 'Director'
+                                                  ? 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150'
+                                                  : role == 'Producer'
+                                                      ? 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?q=80&w=150'
+                                                      : role == 'Critic'
+                                                          ? 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=150'
+                                                          : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150'),
+                                        ),
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12.0),
+                                  Expanded(
+                                    child: Column(
+                                      children: [
+                                        // Name Input
+                                        Container(
+                                          height: 32.0,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(0.03),
+                                            borderRadius: BorderRadius.circular(8.0),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                                          child: TextField(
+                                            controller: nameControllers[role],
+                                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0),
+                                            decoration: InputDecoration(
+                                              hintText: "Profile Name ($role)",
+                                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 12.0),
+                                              border: InputBorder.none,
+                                              contentPadding: const EdgeInsets.only(bottom: 14.0),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6.0),
+                                        // Avatar URL Input
+                                        Container(
+                                          height: 32.0,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(0.03),
+                                            borderRadius: BorderRadius.circular(8.0),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                                          child: TextField(
+                                            controller: avatarControllers[role],
+                                            style: GoogleFonts.plusJakartaSans(color: Colors.white70, fontSize: 11.5),
+                                            onChanged: (val) {
+                                              setSheetState(() {});
+                                            },
+                                            decoration: InputDecoration(
+                                              hintText: "Avatar URL for $role",
+                                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 11.0),
+                                              border: InputBorder.none,
+                                              contentPadding: const EdgeInsets.only(bottom: 15.0),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+
+                        const SizedBox(height: 24.0),
+                        const Divider(color: Colors.white12, height: 1.0),
+                        const SizedBox(height: 24.0),
+
+                        Text(
+                          "SERVER CONFIG",
+                          style: GoogleFonts.cinzel(
+                            fontSize: 18.0,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          "Enter a custom server URL to synchronize listings and progress across all devices in real-time.",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white60,
+                            fontSize: 13.0,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 24.0),
+
+                        // Glowing Connectivity status row
+                        GestureDetector(
+                          onTap: () => checkConnection(setSheetState, urlController.text),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(12.0),
+                              border: Border.all(color: statusColor.withOpacity(0.3), width: 0.8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Glowing dot
+                                AnimatedContainer(
+                                  duration: const Duration(milliseconds: 300),
+                                  width: 10.0,
+                                  height: 10.0,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: statusColor,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: statusColor.withOpacity(0.6),
+                                        blurRadius: 8.0,
+                                        spreadRadius: 2.0,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 10.0),
+                                Text(
+                                  statusText,
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: statusColor,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12.0,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20.0),
+
+                        // Input field
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(14.0),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                          child: TextField(
+                            controller: urlController,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 15.0),
+                            decoration: InputDecoration(
+                              labelText: "API Gateway Base URL",
+                              labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
+                              hintText: "e.g., https://your-server.render.com",
+                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
+                              border: InputBorder.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 24.0),
+                        const Divider(color: Colors.white12, height: 1.0),
+                        const SizedBox(height: 24.0),
+
+                        // EXTERNAL VIDEO PLAYER CONFIGURATION
+                        Text(
+                          "EXTERNAL VIDEO PLAYER CONFIGURATION",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          "Enable external player mapping to stream or play digital prints directly inside apps like VLC, MX Player, or Kodi.",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white60,
+                            fontSize: 12.0,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 16.0),
+                        
+                        // Switch Tile for enable/disable
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(14.0),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: SwitchListTile(
+                            activeColor: primaryColor,
+                            title: Text(
+                              "Always Use External Player",
+                              style: GoogleFonts.plusJakartaSans(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14.0,
+                              ),
+                            ),
+                            subtitle: Text(
+                              "Bypasses the built-in Cinegram mobile playback engine.",
+                              style: GoogleFonts.plusJakartaSans(
+                                color: Colors.white38,
+                                fontSize: 11.0,
+                              ),
+                            ),
+                            value: useExternalPlayer,
+                            onChanged: (val) {
+                              setSheetState(() {
+                                useExternalPlayer = val;
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 12.0),
+
+                        // Selector Button for Default Player
+                        InkWell(
+                          onTap: () {
+                            showModalBottomSheet(
+                              context: context,
+                              backgroundColor: Colors.transparent,
+                              barrierColor: Colors.black.withOpacity(0.5),
+                              builder: (dialogContext) {
+                                return FutureBuilder<List<Map<String, String>>>(
+                                  future: ExternalPlayerService.detectPlayers(),
+                                  builder: (context, snapshot) {
+                                    final players = snapshot.data ?? [];
+                                    final isLoading = snapshot.connectionState == ConnectionState.waiting;
+
+                                    return ClipRRect(
+                                      borderRadius: const BorderRadius.vertical(top: Radius.circular(24.0)),
+                                      child: BackdropFilter(
+                                        filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF0F0F12).withOpacity(0.95),
+                                            border: Border(
+                                              top: BorderSide(color: Colors.white.withOpacity(0.08), width: 1.0),
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Center(
+                                                child: Container(
+                                                  width: 36.0,
+                                                  height: 4.0,
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white24,
+                                                    borderRadius: BorderRadius.circular(10.0),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 20.0),
+                                              Text(
+                                                "SELECT VIDEO PLAYER",
+                                                style: GoogleFonts.cinzel(
+                                                  fontSize: 18.0,
+                                                  fontWeight: FontWeight.w900,
+                                                  color: Colors.white,
+                                                  letterSpacing: 1.0,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4.0),
+                                              Text(
+                                                "Choose your preferred external media engine for mobile video streams.",
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  color: Colors.white54,
+                                                  fontSize: 11.5,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16.0),
+                                              if (isLoading)
+                                                const Center(
+                                                  child: Padding(
+                                                    padding: EdgeInsets.symmetric(vertical: 32.0),
+                                                    child: CircularProgressIndicator(strokeWidth: 2.0),
+                                                  ),
+                                                )
+                                              else if (players.isEmpty)
+                                                Padding(
+                                                  padding: const EdgeInsets.symmetric(vertical: 24.0),
+                                                  child: Text(
+                                                    "No external media players detected.",
+                                                    style: GoogleFonts.plusJakartaSans(color: Colors.white38),
+                                                  ),
+                                                )
+                                              else
+                                                ConstrainedBox(
+                                                  constraints: BoxConstraints(
+                                                    maxHeight: MediaQuery.of(context).size.height * 0.4,
+                                                  ),
+                                                  child: ListView.builder(
+                                                    shrinkWrap: true,
+                                                    itemCount: players.length,
+                                                    itemBuilder: (context, index) {
+                                                      final p = players[index];
+                                                      final name = p['name'] ?? 'Unknown Player';
+                                                      final package = p['package'] ?? '';
+                                                      final isSelected = selectedPlayerPackage == package;
+
+                                                      IconData pIcon = Icons.play_circle_outline_rounded;
+                                                      Color pIconColor = Colors.white60;
+
+                                                      if (package.contains("vlc")) {
+                                                        pIcon = Icons.play_circle_filled_rounded;
+                                                        pIconColor = Colors.orangeAccent;
+                                                      } else if (package.contains("mxtech")) {
+                                                        pIcon = Icons.play_circle_filled_rounded;
+                                                        pIconColor = Colors.blueAccent;
+                                                      } else if (package.contains("nova")) {
+                                                        pIcon = Icons.play_circle_filled_rounded;
+                                                        pIconColor = Colors.greenAccent;
+                                                      } else if (package.contains("kodi")) {
+                                                        pIcon = Icons.dashboard_rounded;
+                                                        pIconColor = Colors.cyanAccent;
+                                                      }
+
+                                                      return Container(
+                                                        margin: const EdgeInsets.only(bottom: 8.0),
+                                                        decoration: BoxDecoration(
+                                                          color: isSelected 
+                                                              ? primaryColor.withOpacity(0.06) 
+                                                              : Colors.white.withOpacity(0.02),
+                                                          borderRadius: BorderRadius.circular(12.0),
+                                                          border: Border.all(
+                                                            color: isSelected 
+                                                                ? primaryColor.withOpacity(0.3) 
+                                                                : Colors.white.withOpacity(0.05),
+                                                          ),
+                                                        ),
+                                                        child: ListTile(
+                                                          leading: Icon(pIcon, color: pIconColor),
+                                                          title: Text(
+                                                            name,
+                                                            style: GoogleFonts.plusJakartaSans(
+                                                              color: Colors.white,
+                                                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                                            ),
+                                                          ),
+                                                          subtitle: Text(
+                                                            package,
+                                                            style: GoogleFonts.plusJakartaSans(
+                                                              color: Colors.white30,
+                                                              fontSize: 10.0,
+                                                            ),
+                                                          ),
+                                                          trailing: isSelected
+                                                              ? Icon(Icons.check_circle_rounded, color: primaryColor)
+                                                              : null,
+                                                          onTap: () {
+                                                            setSheetState(() {
+                                                              selectedPlayerPackage = package;
+                                                              selectedPlayerName = name;
+                                                            });
+                                                            Navigator.pop(dialogContext);
+                                                          },
+                                                        ),
+                                                      );
+                                                    },
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            );
+                          },
+                          borderRadius: BorderRadius.circular(14.0),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.04),
+                              borderRadius: BorderRadius.circular(14.0),
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      "Default External Player",
+                                      style: GoogleFonts.plusJakartaSans(
+                                        color: Colors.white70,
+                                        fontSize: 11.0,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4.0),
+                                    Text(
+                                      selectedPlayerName,
+                                      style: GoogleFonts.plusJakartaSans(
+                                        color: Colors.white,
+                                        fontSize: 14.0,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Row(
+                                  children: [
+                                    Text(
+                                      "CHANGE",
+                                      style: GoogleFonts.plusJakartaSans(
+                                        color: primaryColor,
+                                        fontSize: 11.0,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6.0),
+                                    Icon(Icons.arrow_forward_ios_rounded, color: primaryColor, size: 12.0),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 24.0),
+                        const Divider(color: Colors.white12, height: 1.0),
+                        const SizedBox(height: 24.0),
+
+                        Text(
+                          "IPTV & M3U PLAYLIST SETUP",
+                          style: GoogleFonts.cinzel(
+                            fontSize: 18.0,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          "Enter your custom M3U playlist URL and optional EPG XML to synchronize Live Channels to your widescreen TV experience.",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white60,
+                            fontSize: 13.0,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 20.0),
+
+                        // M3U Input
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(14.0),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                          child: TextField(
+                            controller: m3uController,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 15.0),
+                            decoration: InputDecoration(
+                              labelText: "M3U Playlist URL",
+                              labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
+                              hintText: "https://your-domain.com/playlist.m3u",
+                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
+                              border: InputBorder.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12.0),
+
+                        // EPG Input
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(14.0),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                          child: TextField(
+                            controller: epgController,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 15.0),
+                            decoration: InputDecoration(
+                              labelText: "EPG XML URL (Optional)",
+                              labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
+                              hintText: "http://your-domain.com/epg.xml",
+                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
+                              border: InputBorder.none,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 28.0),
+
+                        // Buttons
+                        Row(
+                          children: [
+                            // Test button
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => checkConnection(setSheetState, urlController.text),
+                                icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                                label: Text(
+                                  "Test Connection",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14.0),
+                                  side: const BorderSide(color: Colors.white24),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14.0),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12.0),
+
+                            // Save & Connect button
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  final newUrl = urlController.text.trim();
+                                  await ApiService.setCustomBaseUrl(newUrl);
+
+                                  // Save IPTV credentials to SharedPreferences
+                                  final prefs = await SharedPreferences.getInstance();
+                                  await prefs.setString('iptv_m3u_url', m3uController.text.trim());
+                                  await prefs.setString('iptv_epg_url', epgController.text.trim());
+                                  
+                                  // Save External Player Configuration
+                                  await prefs.setBool('use_external_player', useExternalPlayer);
+                                  await prefs.setString('selected_external_player_package', selectedPlayerPackage);
+                                  await prefs.setString('selected_external_player_name', selectedPlayerName);
+                                  
+                                  // Save profile custom names and avatars
+                                  final roles = ['Director', 'Producer', 'Critic', 'Viewer'];
+                                  for (final role in roles) {
+                                    final customName = nameControllers[role]!.text.trim();
+                                    final customAvatar = avatarControllers[role]!.text.trim();
+                                    if (customName.isNotEmpty) {
+                                      await prefs.setString('profile_name_$role', customName);
+                                    }
+                                    if (customAvatar.isNotEmpty) {
+                                      await prefs.setString('profile_avatar_$role', customAvatar);
+                                    } else {
+                                      await prefs.remove('profile_avatar_$role');
+                                    }
+                                  }
+                                  
+                                  // Re-test connection for validation
+                                  await checkConnection(setSheetState, newUrl);
+                                  
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          isConnected == true
+                                              ? "Connected & Settings saved successfully!"
+                                              : "Saved custom URL and IPTV URLs, but backend is offline.",
+                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                        ),
+                                        backgroundColor: isConnected == true ? primaryColor : const Color(0xFF1E1E24),
+                                      ),
+                                    );
+                                    if (isConnected == true) {
+                                      Navigator.pop(context);
+                                    }
+                                  }
+                                },
+                                icon: const Icon(Icons.check_rounded, color: Colors.black),
+                                label: Text(
+                                  "Apply & Save",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryColor,
+                                  padding: const EdgeInsets.symmetric(vertical: 14.0),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14.0),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}

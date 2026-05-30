@@ -1,0 +1,48 @@
+# ==========================================================
+# CINEGRAM RENDER BLUEPRINT SPECIFICATION
+# Deploy the Node.js backend streaming gateway with 1-click.
+# Reference: https://render.com/docs/blueprints
+# ==========================================================
+
+services:
+  - type: web
+    name: cinegram-backend
+    runtime: docker
+    plan: free # Deploys on Render's Free Tier (512MB RAM)
+    dockerContext: backend
+    dockerfilePath: backend/Dockerfile
+    
+    # Expose the internal port the Express server listens on
+    envVars:
+      - key: PORT
+        value: "3000"
+      
+      - key: NODE_ENV
+        value: production
+
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=400" # Cap Node heap at 400MB to fit cleanly in 512MB RAM without OOM crashes
+
+      # ----------------------------------------------------
+      # TELEGRAM API CREDENTIALS & SESSION
+      # ----------------------------------------------------
+      - key: TELEGRAM_API_ID
+        sync: false # Render will prompt you to enter this secure value on initial deploy
+
+      - key: TELEGRAM_API_HASH
+        sync: false # Render will prompt you to enter this secure value on initial deploy
+
+      - key: TELEGRAM_SESSION_STRING
+        sync: false # Run 'node login.js' locally first to generate this session string!
+
+      # ----------------------------------------------------
+      # THIRD-PARTY INTEGRATIONS
+      # ----------------------------------------------------
+      - key: TMDB_API_KEY
+        sync: false # Get your API key from themoviedb.org dashboard
+
+      - key: SUPABASE_URL
+        sync: false # Supabase Project URL (e.g. https://your-project.supabase.co)
+
+      - key: SUPABASE_KEY
+        sync: false # Supabase Service Role API key or Anon Key

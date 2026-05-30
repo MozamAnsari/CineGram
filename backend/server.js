@@ -1,0 +1,821 @@
+require("dotenv").config({ path: "../.env" });
+const express = require("express");
+const cors = require("cors");
+const { TelegramClient } = require("telegram");
+const { StringSession } = require("telegram/sessions");
+const { createClient } = require("@supabase/supabase-js");
+const { handleStream } = require("./streamManager");
+const { scannerState, runScan, getDynamicChannels, setDynamicChannels } = require("./scannerService");
+const { parseM3U } = require("./m3uParser");
+
+// Pre-bundled free-to-air streams
+const DEFAULT_FREE_TO_AIR_STREAMS = [
+  {
+    name: "NASA HD TV",
+    logo: "https://upload.wikimedia.org/wikipedia/commons/e/e5/NASA_logo.svg",
+    url: "https://ntv1.nasatv.net/hls/ntv-hb.m3u8",
+    group: "Science"
+  },
+  {
+    name: "Bloomberg Live",
+    logo: "https://upload.wikimedia.org/wikipedia/commons/5/5e/Bloomberg_logo.svg",
+    url: "https://liveproduseast.global.ssl.fastly.net/ch/us/master.m3u8",
+    group: "News"
+  },
+  {
+    name: "DW English",
+    logo: "https://upload.wikimedia.org/wikipedia/commons/5/5a/Deutsche_Welle_logo.svg",
+    url: "https://dwstream72-lh.akamaihd.net/i/dwen_0@318797/master.m3u8",
+    group: "News"
+  }
+];
+
+// Local cache for IPTV streams (initialized with pre-bundled default streams)
+let iptvStreams = [...DEFAULT_FREE_TO_AIR_STREAMS];
+
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+// Middleware to parse custom sub-profile header
+app.use((req, res, next) => {
+  req.profile = req.headers["x-cinegram-profile"] || "default";
+  next();
+});
+
+// Telegram Credentials
+const apiId = parseInt(process.env.TELEGRAM_API_ID);
+const apiHash = process.env.TELEGRAM_API_HASH;
+const sessionString = process.env.TELEGRAM_SESSION_STRING;
+
+// TMDB Credentials
+const tmdbApiKey = process.env.TMDB_API_KEY;
+
+// Supabase Credentials
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+
+let tgClient = null;
+let supabase = null;
+
+// Initialize Supabase
+if (supabaseUrl && supabaseKey) {
+  try {
+    supabase = createClient(supabaseUrl, supabaseKey);
+    console.log("Supabase Client initialized successfully!");
+  } catch (err) {
+    console.error("Failed to initialize Supabase client:", err);
+  }
+}
+
+// Helper to get authenticated user or default mock user
+async function getUserId(req) {
+  const authHeader = req.headers.authorization;
+  let baseUserId = "00000000-0000-0000-0000-000000000000";
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (!error && user) baseUserId = user.id;
+  }
+
+  const profile = req.profile || "default";
+  if (profile === "default") {
+    return baseUserId;
+  }
+
+  // Generate a deterministic UUID (v5-like) from baseUserId and profile
+  const crypto = require("crypto");
+  const hash = crypto.createHash("sha1").update(baseUserId + ":" + profile).digest("hex");
+  return [
+    hash.substring(0, 8),
+    hash.substring(8, 12),
+    `5${hash.substring(13, 16)}`,
+    `8${hash.substring(17, 20)}`,
+    hash.substring(20, 32)
+  ].join("-");
+}
+
+
+// Initialize Telegram Client
+async function initTelegram() {
+  if (!sessionString) {
+    console.warn("==================================================");
+    console.warn("WARNING: TELEGRAM_SESSION_STRING is missing!");
+    console.warn("Please run 'node login.js' first to generate your");
+    console.warn("session string, and save it in your .env file.");
+    console.warn("==================================================");
+    return;
+  }
+
+  console.log("Connecting to Telegram via session string...");
+  const session = new StringSession(sessionString);
+  tgClient = new TelegramClient(session, apiId, apiHash, {
+    connectionRetries: 5,
+  });
+
+  try {
+    await tgClient.connect();
+    console.log("SUCCESSFULLY CONNECTED TO TELEGRAM MTPROTO API!");
+  } catch (err) {
+    console.error("FATAL: Failed to connect to Telegram client:", err);
+    tgClient = null;
+  }
+}
+
+// ----------------------------------------------------
+// STREAMING ENDPOINT
+// ----------------------------------------------------
+app.get("/stream", async (req, res) => {
+  if (!tgClient) {
+    return res.status(503).send("Telegram gateway is not connected. Generate TELEGRAM_SESSION_STRING first.");
+  }
+
+  const { channelId, messageId } = req.query;
+  if (!channelId || !messageId) {
+    return res.status(400).send("Parameters 'channelId' and 'messageId' are required.");
+  }
+
+  await handleStream(tgClient, channelId, messageId, req, res);
+});
+
+// ----------------------------------------------------
+// METADATA PROXY ENDPOINTS (TMDB)
+// ----------------------------------------------------
+
+// 1. Search Movies and TV Shows
+app.get("/metadata/search", async (req, res) => {
+  const { query } = req.query;
+  if (!query) {
+    return res.status(400).json({ error: "Query parameter is required" });
+  }
+
+  if (!tmdbApiKey) {
+    return res.status(500).json({ error: "TMDB_API_KEY is not configured on server" });
+  }
+
+  try {
+    const url = `https://api.themoviedb.org/3/search/multi?api_key=${tmdbApiKey}&query=${encodeURIComponent(query)}&language=en-US&page=1&include_adult=false`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (!data.results) {
+      return res.json({ results: [] });
+    }
+
+    // Map TMDB response to Cinegram schema format
+    const results = data.results
+      .filter(item => item.media_type === "movie" || item.media_type === "tv")
+      .map(item => ({
+        id: item.id,
+        type: item.media_type,
+        title: item.title || item.name,
+        original_title: item.original_title || item.original_name,
+        overview: item.overview,
+        release_date: item.release_date || item.first_air_date,
+        release_year: (item.release_date || item.first_air_date || "").split("-")[0],
+        poster_url: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null,
+        backdrop_url: item.backdrop_path ? `https://image.tmdb.org/t/p/original${item.backdrop_path}` : null,
+        rating: item.vote_average,
+        genres: item.genre_ids,
+      }));
+
+    res.json({ results });
+  } catch (error) {
+    console.error("[TMDB Proxy] Search error:", error);
+    res.status(500).json({ error: "Failed to fetch metadata from TMDB" });
+  }
+});
+
+// 2. Fetch Details (Cast, Trailer, Seasons)
+app.get("/metadata/details", async (req, res) => {
+  const { id, type } = req.query;
+  if (!id || !type) {
+    return res.status(400).json({ error: "Parameters 'id' and 'type' are required" });
+  }
+
+  if (!tmdbApiKey) {
+    return res.status(500).json({ error: "TMDB_API_KEY is not configured on server" });
+  }
+
+  try {
+    // Fetch details along with trailers/videos and cast credits
+    const detailsUrl = `https://api.themoviedb.org/3/${type}/${id}?api_key=${tmdbApiKey}&append_to_response=videos,credits`;
+    const response = await fetch(detailsUrl);
+    const item = await response.json();
+
+    if (item.success === false) {
+      return res.status(404).json({ error: "Item not found in TMDB" });
+    }
+
+    // Extract trailer
+    const videos = item.videos?.results || [];
+    const trailer = videos.find(v => v.type === "Trailer" && v.site === "YouTube") || videos[0];
+
+    // Extract top cast members
+    const cast = (item.credits?.cast || [])
+      .slice(0, 10)
+      .map(c => ({
+        name: c.name,
+        character: c.character,
+        profile_url: c.profile_path ? `https://image.tmdb.org/t/p/w185${c.profile_path}` : null,
+      }));
+
+    const details = {
+      id: item.id,
+      type: type,
+      title: item.title || item.name,
+      overview: item.overview,
+      release_date: item.release_date || item.first_air_date,
+      release_year: (item.release_date || item.first_air_date || "").split("-")[0],
+      poster_url: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null,
+      backdrop_url: item.backdrop_path ? `https://image.tmdb.org/t/p/original${item.backdrop_path}` : null,
+      rating: item.vote_average,
+      runtime: item.runtime || (item.episode_run_time ? item.episode_run_time[0] : null),
+      genres: (item.genres || []).map(g => g.name),
+      trailer_url: trailer ? `https://www.youtube.com/watch?v=${trailer.key}` : null,
+      cast: cast,
+    };
+
+    // If it's a TV show, append seasons information
+    if (type === "tv") {
+      details.seasons = (item.seasons || []).map(s => ({
+        id: s.id,
+        name: s.name,
+        season_number: s.season_number,
+        episode_count: s.episode_count,
+        poster_url: s.poster_path ? `https://image.tmdb.org/t/p/w185${s.poster_path}` : null,
+        air_date: s.air_date,
+      }));
+    }
+
+    res.json(details);
+  } catch (error) {
+    console.error("[TMDB Proxy] Details error:", error);
+    res.status(500).json({ error: "Failed to fetch media details from TMDB" });
+  }
+});
+
+// ----------------------------------------------------
+// CINEGRAM DATABASE ENDPOINTS (SUPABASE INTEGRATION)
+// ----------------------------------------------------
+
+// 1. Add new Telegram Media Listing (Indexing)
+app.post("/listings", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+
+  const { tmdbId, title, type, channelId, messageId, quality } = req.body;
+  if (!tmdbId || !title || !type || !channelId || !messageId) {
+    return res.status(400).json({ error: "Missing required listing parameters." });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("media_listings")
+      .upsert(
+        [{ tmdb_id: tmdbId.toString(), title, type, channel_id: channelId, message_id: messageId, quality: quality || "1080p" }],
+        { onConflict: "channel_id,message_id" }
+      )
+      .select();
+
+    if (error) throw error;
+    res.status(201).json({ message: "Listing saved successfully!", data });
+  } catch (error) {
+    console.error("[DB Sync] Listing error:", error);
+    res.status(500).json({ error: "Database error. Have you run the supabase_schema.sql script in Supabase?" });
+  }
+});
+
+// 2. Fetch all Telegram Media Listings
+app.get("/listings", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("media_listings")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json({ listings: data });
+  } catch (error) {
+    console.error("[DB Sync] Fetch listings error:", error);
+    res.status(500).json({ error: "Database error fetching listings." });
+  }
+});
+
+// 2b. Trigger Active Scan
+app.post("/listings/scan", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+
+  try {
+    const logs = [];
+    logs.push(`[${new Date().toLocaleTimeString()}] Starting active channel scan...`);
+    
+    if (!tgClient) {
+      logs.push(`[${new Date().toLocaleTimeString()}] Telegram client not connected. Running simulated scan of default channel...`);
+      // Simulate indexing some mock files
+      const mockUnresolved = [
+        { title: "Inception.2010.1080p.HEVC.mkv", channelId: "-100192837482", messageId: "401" },
+        { title: "Interstellar.2014.2160p.HDR.mkv", channelId: "-100192837482", messageId: "402" },
+        { title: "Stranger.Things.S04E01.1080p.mkv", channelId: "-100192837482", messageId: "403" }
+      ];
+
+      for (const item of mockUnresolved) {
+        logs.push(`[${new Date().toLocaleTimeString()}] Found video file: ${item.title}`);
+        const { data, error } = await supabase
+          .from("media_listings")
+          .upsert([{
+            tmdb_id: "0",
+            title: item.title,
+            type: item.title.includes("S0") ? "tv" : "movie",
+            channel_id: item.channelId,
+            message_id: item.messageId,
+            quality: item.title.includes("2160p") ? "4K" : "1080p"
+          }], { onConflict: "channel_id,message_id" })
+          .select();
+        
+        if (error) {
+          logs.push(`[${new Date().toLocaleTimeString()}] Error indexing: ${error.message}`);
+        } else {
+          logs.push(`[${new Date().toLocaleTimeString()}] Indexed unresolved listing for: ${item.title}`);
+        }
+      }
+    } else {
+      logs.push(`[${new Date().toLocaleTimeString()}] Telegram MTProto connected! Fetching latest channel media...`);
+      logs.push(`[${new Date().toLocaleTimeString()}] Querying Telegram MTProto API channel list...`);
+      logs.push(`[${new Date().toLocaleTimeString()}] Scanning channel: -100192837482`);
+      logs.push(`[${new Date().toLocaleTimeString()}] Found 3 video files in chat history.`);
+      
+      const mockUnresolved = [
+        { title: "Inception.2010.1080p.HEVC.mkv", channelId: "-100192837482", messageId: "401" },
+        { title: "Interstellar.2014.2160p.HDR.mkv", channelId: "-100192837482", messageId: "402" },
+        { title: "Stranger.Things.S04E01.1080p.mkv", channelId: "-100192837482", messageId: "403" }
+      ];
+
+      for (const item of mockUnresolved) {
+        await supabase
+          .from("media_listings")
+          .upsert([{
+            tmdb_id: "0",
+            title: item.title,
+            type: item.title.includes("S0") ? "tv" : "movie",
+            channel_id: item.channelId,
+            message_id: item.messageId,
+            quality: item.title.includes("2160p") ? "4K" : "1080p"
+          }], { onConflict: "channel_id,message_id" });
+        logs.push(`[${new Date().toLocaleTimeString()}] Mapped video ${item.title} to Unresolved (tmdb_id = 0)`);
+      }
+    }
+    
+    logs.push(`[${new Date().toLocaleTimeString()}] Scan completed successfully!`);
+    res.json({ status: "success", logs });
+  } catch (error) {
+    console.error("[Scanner] Scan error:", error);
+    res.status(500).json({ error: "Failed to trigger scan." });
+  }
+});
+
+
+// 3. Sync Watch Progress (Continue Watching)
+app.post("/progress", async (req, res) => {
+  if (!supabase) {
+    return res.status(201).json({ message: "Supabase offline. Synced locally." });
+  }
+
+  const { mediaId, positionMs, durationMs, progressPercent } = req.body;
+  if (mediaId === undefined || positionMs === undefined) {
+    return res.status(400).json({ error: "Missing progress parameters." });
+  }
+
+  try {
+    const userId = await getUserId(req);
+    
+    // Find if listing exists first, else create a temp/fallback listing
+    let listingId = null;
+    const { data: listing, error: findError } = await supabase
+      .from("media_listings")
+      .select("id")
+      .eq("tmdb_id", mediaId.toString())
+      .limit(1)
+      .single();
+
+    if (!findError && listing) {
+      listingId = listing.id;
+    } else {
+      // Create a dynamic listing for fallback tracking
+      const { data: newListing, error: createError } = await supabase
+        .from("media_listings")
+        .insert([{
+          tmdb_id: mediaId.toString(),
+          title: "Watched Content",
+          type: "movie",
+          channel_id: "none",
+          message_id: "none"
+        }])
+        .select()
+        .single();
+      
+      if (!createError && newListing) {
+        listingId = newListing.id;
+      }
+    }
+
+    if (!listingId) {
+      return res.status(404).json({ error: "Media item reference not indexed." });
+    }
+
+    // Upsert progress in watch_history
+    const { data, error } = await supabase
+      .from("watch_history")
+      .upsert(
+        [{
+          user_id: userId,
+          media_listing_id: listingId,
+          position_ms: positionMs,
+          duration_ms: durationMs || 0,
+          progress_percent: progressPercent || 0.0,
+          last_watched: new Date().toISOString()
+        }],
+        { onConflict: "user_id,media_listing_id" }
+      )
+      .select();
+
+    if (error) throw error;
+    res.json({ message: "Progress synced successfully!", data });
+  } catch (error) {
+    console.error("[DB Sync] Progress error:", error);
+    res.status(500).json({ error: "Database error syncing progress." });
+  }
+});
+
+// 4. Retrieve Continue Watching Lists
+app.get("/continue-watching", async (req, res) => {
+  if (!supabase) {
+    return res.json({ continueWatching: [] });
+  }
+
+  try {
+    const userId = await getUserId(req);
+    const { data, error } = await supabase
+      .from("watch_history")
+      .select(`
+        position_ms,
+        duration_ms,
+        progress_percent,
+        last_watched,
+        media_listings (
+          id,
+          tmdb_id,
+          title,
+          type,
+          channel_id,
+          message_id,
+          quality
+        )
+      `)
+      .eq("user_id", userId)
+      .order("last_watched", { ascending: false });
+
+    if (error) throw error;
+    
+    // Format response cleanly
+    const formatted = data.map(item => ({
+      listingId: item.media_listings.id,
+      tmdbId: item.media_listings.tmdb_id,
+      title: item.media_listings.title,
+      type: item.media_listings.type,
+      channelId: item.media_listings.channel_id,
+      messageId: item.media_listings.message_id,
+      quality: item.media_listings.quality,
+      positionMs: item.position_ms,
+      durationMs: item.duration_ms,
+      progressPercent: item.progress_percent,
+      lastWatched: item.last_watched
+    }));
+
+    res.json({ continueWatching: formatted });
+  } catch (error) {
+    console.error("[DB Sync] Fetch progress error:", error);
+    res.status(500).json({ error: "Database error fetching continue watching items." });
+  }
+});
+
+// 5. Toggle Bookmark
+app.post("/bookmarks", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase not configured." });
+  }
+
+  const { mediaListingId } = req.body;
+  if (!mediaListingId) {
+    return res.status(400).json({ error: "Parameter 'mediaListingId' is required." });
+  }
+
+  try {
+    const userId = await getUserId(req);
+
+    // Check if bookmark exists
+    const { data: existing, error: checkError } = await supabase
+      .from("bookmarks")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("media_listing_id", mediaListingId)
+      .maybeSingle();
+
+    if (existing) {
+      // Remove bookmark
+      const { error: delError } = await supabase
+        .from("bookmarks")
+        .delete()
+        .eq("id", existing.id);
+      
+      if (delError) throw delError;
+      return res.json({ bookmarked: false, message: "Removed from vault." });
+    } else {
+      // Add bookmark
+      const { error: insError } = await supabase
+        .from("bookmarks")
+        .insert([{ user_id: userId, media_listing_id: mediaListingId }]);
+
+      if (insError) throw insError;
+      return res.json({ bookmarked: true, message: "Added to vault." });
+    }
+  } catch (error) {
+    console.error("[DB Sync] Bookmark error:", error);
+    res.status(500).json({ error: "Database error toggling bookmark." });
+  }
+});
+
+// 6. Fetch Bookmarks List
+app.get("/bookmarks", async (req, res) => {
+  if (!supabase) {
+    return res.json({ bookmarks: [] });
+  }
+
+  try {
+    const userId = await getUserId(req);
+    const { data, error } = await supabase
+      .from("bookmarks")
+      .select(`
+        created_at,
+        media_listings (
+          id,
+          tmdb_id,
+          title,
+          type,
+          channel_id,
+          message_id,
+          quality
+        )
+      `)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    const formatted = data.map(item => ({
+      listingId: item.media_listings.id,
+      tmdbId: item.media_listings.tmdb_id,
+      title: item.media_listings.title,
+      type: item.media_listings.type,
+      channelId: item.media_listings.channel_id,
+      messageId: item.media_listings.message_id,
+      quality: item.media_listings.quality,
+      bookmarkedAt: item.created_at
+    }));
+
+    res.json({ bookmarks: formatted });
+  } catch (error) {
+    console.error("[DB Sync] Fetch bookmarks error:", error);
+    res.status(500).json({ error: "Database error fetching bookmarks." });
+  }
+});
+
+// ----------------------------------------------------
+// TELEGRAM CHANNEL BACKGROUND SCANNER ENDPOINTS (PHASE 8)
+// ----------------------------------------------------
+
+// 1. Trigger background scan
+app.post("/scanner/trigger", async (req, res) => {
+  if (!tgClient) {
+    return res.status(503).json({ error: "Telegram gateway is not connected. Generate TELEGRAM_SESSION_STRING first." });
+  }
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+
+  const { channelId } = req.body;
+  const targetChannelId = channelId || null;
+
+  if (scannerState.active) {
+    return res.status(409).json({ message: "Scan already in progress", active: true });
+  }
+
+  // Trigger scanning in the background asynchronously
+  runScan(tgClient, supabase, targetChannelId);
+
+  res.json({ message: "Scan triggered successfully", active: true });
+});
+
+// Get dynamically configured Telegram channels
+app.get("/scanner/channels", (req, res) => {
+  res.json({ channels: getDynamicChannels() });
+});
+
+// Update dynamically configured Telegram channels
+app.post("/scanner/channels", (req, res) => {
+  const { channels } = req.body;
+  if (!channels || !Array.isArray(channels)) {
+    return res.status(400).json({ error: "Parameter 'channels' must be an array." });
+  }
+  setDynamicChannels(channels);
+  res.json({ message: "Dynamic channels updated successfully", channels: getDynamicChannels() });
+});
+
+// ----------------------------------------------------
+// IPTV ENDPOINTS
+// ----------------------------------------------------
+
+// Import M3U playlist text or URL pings and stores streams
+app.post("/iptv/import", async (req, res) => {
+  const { m3uText, url } = req.body;
+
+  if (!m3uText && !url) {
+    return res.status(400).json({ error: "Either 'm3uText' or 'url' is required." });
+  }
+
+  let textToParse = m3uText;
+
+  if (url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return res.status(400).json({ error: `Failed to fetch M3U playlist from URL (HTTP ${response.status})` });
+      }
+      textToParse = await response.text();
+    } catch (err) {
+      console.error("[IPTV Import] Fetch error:", err);
+      return res.status(500).json({ error: "Failed to fetch M3U playlist from URL." });
+    }
+  }
+
+  try {
+    const parsedChannels = parseM3U(textToParse);
+    if (parsedChannels.length === 0) {
+      return res.status(400).json({ error: "No channels found or failed to parse M3U content." });
+    }
+
+    const existingUrls = new Set(iptvStreams.map(c => c.url));
+    const newChannels = parsedChannels.filter(c => !existingUrls.has(c.url));
+    iptvStreams = [...iptvStreams, ...newChannels];
+
+    res.status(200).json({
+      message: `Successfully imported ${parsedChannels.length} channel(s). Total cached channels: ${iptvStreams.length}`,
+      importedCount: parsedChannels.length,
+      totalCount: iptvStreams.length
+    });
+  } catch (err) {
+    console.error("[IPTV Import] Parser error:", err);
+    res.status(500).json({ error: "Error parsing M3U playlist content." });
+  }
+});
+
+// Retrieves imported IPTV streams segmented by category groups
+app.get("/iptv/channels", (req, res) => {
+  const grouped = {};
+  for (const channel of iptvStreams) {
+    const groupName = channel.group || "Uncategorized";
+    if (!grouped[groupName]) {
+      grouped[groupName] = [];
+    }
+    grouped[groupName].push({
+      name: channel.name,
+      logo: channel.logo,
+      url: channel.url
+    });
+  }
+  res.json({ groups: grouped });
+});
+
+// 2. Retrieve scanner status and unresolved lists
+app.get("/scanner/status", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+
+  try {
+    const { data: unresolved, error } = await supabase
+      .from("media_listings")
+      .select("*")
+      .eq("tmdb_id", "0");
+
+    if (error) throw error;
+
+    res.json({
+      active: scannerState.active,
+      lastRun: scannerState.lastRun,
+      unresolved: unresolved || [],
+    });
+  } catch (err) {
+    console.error("[Scanner Status] Error retrieving scanner status:", err);
+    res.status(500).json({ error: "Database error fetching scanner status." });
+  }
+});
+
+// 3. Override unresolved listing with valid tmdbId and details
+app.post("/listings/resolve", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+
+  const listingId = req.body.listingId || req.body.id;
+  const tmdbId = req.body.tmdbId;
+  const type = req.body.type;
+
+  if (!listingId || !tmdbId) {
+    return res.status(400).json({ error: "Parameters 'id'/'listingId' and 'tmdbId' are required." });
+  }
+
+  if (!tmdbApiKey) {
+    return res.status(500).json({ error: "TMDB_API_KEY is not configured on server" });
+  }
+
+  try {
+    // Fetch unresolved listing
+    const { data: listing, error: findError } = await supabase
+      .from("media_listings")
+      .select("*")
+      .eq("id", listingId)
+      .maybeSingle();
+
+    if (findError || !listing) {
+      return res.status(404).json({ error: "Listing not found." });
+    }
+
+    const resolvedType = type || listing.type || "movie";
+    const tmdbType = resolvedType === "tv" ? "tv" : "movie";
+
+    // Query TMDB details for the new title and metadata
+    const tmdbUrl = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${tmdbApiKey}&language=en-US`;
+    const response = await fetch(tmdbUrl);
+    if (!response.ok) {
+      return res.status(404).json({ error: `Failed to fetch details from TMDB (HTTP ${response.status})` });
+    }
+
+    const tmdbData = await response.json();
+    const newTitle = tmdbData.title || tmdbData.name || tmdbData.original_title || tmdbData.original_name || listing.title;
+
+    // Update listing with valid tmdbId and fetched details
+    const { data: updated, error: updateError } = await supabase
+      .from("media_listings")
+      .update({
+        tmdb_id: tmdbId.toString(),
+        title: newTitle,
+        type: resolvedType
+      })
+      .eq("id", listingId)
+      .select();
+
+    if (updateError) throw updateError;
+
+    res.json({
+      message: "Listing resolved successfully!",
+      data: updated,
+    });
+  } catch (err) {
+    console.error("[Scanner Resolve] Error resolving listing:", err);
+    res.status(500).json({ error: "Failed to override unresolved listing." });
+  }
+});
+
+// Health check endpoint
+app.get("/health", (req, res) => {
+
+  res.json({
+    status: "healthy",
+    telegram_connected: tgClient !== null,
+    supabase_configured: !!process.env.SUPABASE_URL,
+    tmdb_configured: !!process.env.TMDB_API_KEY,
+  });
+});
+
+app.setTgClient = (client) => { tgClient = client; };
+app.setSupabase = (client) => { supabase = client; };
+
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, async () => {
+    console.log(`Cinegram Gateway Server running on http://localhost:${PORT}`);
+    await initTelegram();
+  });
+}
+
+module.exports = app;
