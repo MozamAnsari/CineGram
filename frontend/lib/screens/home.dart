@@ -10,6 +10,7 @@ import 'details.dart';
 import 'search.dart';
 import 'tv_home.dart';
 import 'profile_select.dart';
+import 'tv_player.dart';
 import 'package:provider/provider.dart';
 import '../theme/cinegram_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +28,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   final ScrollController _mainScrollController = ScrollController();
   double _scrollOpacity = 0.0;
   String _activeAvatarUrl = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150';
+  
+  bool _isKidsProfileActive = false;
+  String? _activeRole;
 
   // Dynamic cloud live sync rows
   List<MediaItem> _dynamicContinueWatching = [];
@@ -100,6 +104,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       
       final roleKey = foundRole ?? 'Viewer';
       final savedAvatar = prefs.getString('profile_avatar_$roleKey');
+      final isKids = prefs.getBool('profile_is_kids_$roleKey') ?? (roleKey == 'Viewer');
+      
+      setState(() {
+        _activeRole = roleKey;
+        _isKidsProfileActive = isKids;
+      });
+
       if (savedAvatar != null && savedAvatar.isNotEmpty) {
         setState(() {
           _activeAvatarUrl = savedAvatar;
@@ -116,6 +127,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         });
       }
     } catch (_) {}
+  }
+
+  List<MediaItem> _filterKidsContent(List<MediaItem> items) {
+    if (!_isKidsProfileActive) return items;
+    return items.where((item) {
+      final containsMatureGenre = item.genres.any((g) => 
+        g == 'Thriller' || g == 'Psychological' || g == 'Cyberpunk' || g == 'Corporate'
+      );
+      return !containsMatureGenre;
+    }).toList();
   }
 
   @override
@@ -220,10 +241,36 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   style: GoogleFonts.cinzel(
                     fontSize: 24.0,
                     fontWeight: FontWeight.w900,
-                    color: Theme.of(context).primaryColor,
+                    color: _isKidsProfileActive ? Colors.orangeAccent : Theme.of(context).primaryColor,
                     letterSpacing: 2.0,
                   ),
                 ),
+                if (_isKidsProfileActive) ...[
+                  const SizedBox(width: 8.0),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 3.0),
+                    decoration: BoxDecoration(
+                      color: Colors.orangeAccent,
+                      borderRadius: BorderRadius.circular(6.0),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.orangeAccent.withOpacity(0.3),
+                          blurRadius: 8.0,
+                          spreadRadius: 1.0,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      "KIDS",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 10.0,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
             
@@ -269,13 +316,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ),
                 const SizedBox(width: 12.0),
                 GestureDetector(
-                  onTap: () => _showServerSettingsBottomSheet(context),
+                  onTap: () async {
+                    final authorized = await _showParentalGate(context);
+                    if (authorized) {
+                      _showServerSettingsBottomSheet(context);
+                    }
+                  },
                   child: Container(
                     width: 38.0,
                     height: 38.0,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      border: Border.all(color: Theme.of(context).primaryColor, width: 1.5),
+                      border: Border.all(
+                        color: _isKidsProfileActive ? Colors.orangeAccent : Theme.of(context).primaryColor, 
+                        width: 1.5,
+                      ),
                       image: DecorationImage(
                         image: CachedNetworkImageProvider(_activeAvatarUrl),
                         fit: BoxFit.cover,
@@ -868,11 +923,128 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
+  Future<bool> _showParentalGate(BuildContext context) async {
+    if (!_isKidsProfileActive) return true; // Direct pass if not Kids Mode
+    
+    final prefs = await SharedPreferences.getInstance();
+    final hasParentPin = prefs.getBool('profile_has_pin_Director') ?? true;
+    final parentPin = prefs.getString('profile_pin_Director') ?? '1234';
+    
+    if (!hasParentPin) return true; // Direct pass if no parent PIN set
+
+    final controller = TextEditingController();
+    bool isCorrect = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
+              child: AlertDialog(
+                backgroundColor: const Color(0xFF0F0F12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20.0),
+                  side: const BorderSide(color: Colors.orangeAccent, width: 1.5),
+                ),
+                title: Center(
+                  child: Column(
+                    children: [
+                      const Icon(Icons.security_rounded, color: Colors.orangeAccent, size: 36.0),
+                      const SizedBox(height: 12.0),
+                      Text(
+                         "PARENTAL CONTROL GATE",
+                         style: GoogleFonts.cinzel(
+                           color: Colors.white,
+                           fontWeight: FontWeight.bold,
+                           fontSize: 16.0,
+                           letterSpacing: 1.0,
+                         ),
+                      ),
+                    ],
+                  ),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "Please enter the Director (Parent) profile 4-digit PIN to authorize this action.",
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white70, fontSize: 13.0, height: 1.4),
+                    ),
+                    const SizedBox(height: 20.0),
+                    Container(
+                      width: 160.0,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.04),
+                        borderRadius: BorderRadius.circular(12.0),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      child: TextField(
+                        controller: controller,
+                        keyboardType: TextInputType.number,
+                        maxLength: 4,
+                        obscureText: true,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 20.0, fontWeight: FontWeight.bold, letterSpacing: 8.0),
+                        decoration: const InputDecoration(
+                          counterText: "",
+                          border: InputBorder.none,
+                          hintText: "••••",
+                          hintStyle: TextStyle(color: Colors.white24, letterSpacing: 4.0),
+                        ),
+                        onChanged: (val) {
+                          if (val.length == 4) {
+                            if (val == parentPin) {
+                              isCorrect = true;
+                              Navigator.pop(context);
+                            } else {
+                              controller.clear();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text("Incorrect Parent PIN. Try again!"),
+                                  backgroundColor: Colors.redAccent,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      isCorrect = false;
+                      Navigator.pop(context);
+                    },
+                    child: Text(
+                      "CANCEL",
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+        );
+      }
+    );
+    return isCorrect;
+  }
+
   void _showServerSettingsBottomSheet(BuildContext context) {
     final TextEditingController urlController = TextEditingController(text: ApiService.baseUrl);
     final TextEditingController m3uController = TextEditingController();
     final TextEditingController epgController = TextEditingController();
     final TextEditingController hexColorController = TextEditingController();
+    
+    final Map<String, bool> hasPinMap = {};
+    final Map<String, bool> isKidsMap = {};
     
     final Map<String, TextEditingController> nameControllers = {
       'Director': TextEditingController(),
@@ -882,6 +1054,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     };
     
     final Map<String, TextEditingController> avatarControllers = {
+      'Director': TextEditingController(),
+      'Producer': TextEditingController(),
+      'Critic': TextEditingController(),
+      'Viewer': TextEditingController(),
+    };
+
+    final Map<String, TextEditingController> pinControllers = {
       'Director': TextEditingController(),
       'Producer': TextEditingController(),
       'Critic': TextEditingController(),
@@ -907,6 +1086,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       for (final role in roles) {
         nameControllers[role]!.text = prefs.getString('profile_name_$role') ?? role;
         avatarControllers[role]!.text = prefs.getString('profile_avatar_$role') ?? '';
+        hasPinMap[role] = prefs.getBool('profile_has_pin_$role') ?? (role == 'Director');
+        pinControllers[role]!.text = prefs.getString('profile_pin_$role') ?? '1234';
+        isKidsMap[role] = prefs.getBool('profile_is_kids_$role') ?? (role == 'Viewer');
       }
     });
 
@@ -1038,12 +1220,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               ],
                             ),
                             ElevatedButton.icon(
-                              onPressed: () {
+                              onPressed: () async {
                                 Navigator.pop(context); // Close bottom sheet
-                                Navigator.of(context).pushAndRemoveUntil(
-                                  MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
-                                  (route) => false,
-                                );
+                                final authorized = await _showParentalGate(context);
+                                if (authorized) {
+                                  Navigator.of(context).pushAndRemoveUntil(
+                                    MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
+                                    (route) => false,
+                                  );
+                                }
                               },
                               icon: const Icon(Icons.swap_horiz, color: Colors.black, size: 18),
                               label: Text(
@@ -1058,6 +1243,58 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 backgroundColor: primaryColor,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(10.0),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24.0),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _showAnalyticsDashboard(context);
+                                },
+                                icon: const Icon(Icons.bar_chart_rounded, color: Colors.black, size: 18),
+                                label: Text(
+                                  "Viewing Stats",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black,
+                                    fontSize: 12.0,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryColor,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10.0),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12.0),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _showWatchPartyLobby(context);
+                                },
+                                icon: Icon(Icons.groups_rounded, color: primaryColor, size: 18),
+                                label: Text(
+                                  "Co-Watch Room",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                    fontSize: 12.0,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: primaryColor),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10.0),
+                                  ),
                                 ),
                               ),
                             ),
@@ -1338,6 +1575,85 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                               contentPadding: const EdgeInsets.only(bottom: 15.0),
                                             ),
                                           ),
+                                        ),
+                                        const SizedBox(height: 8.0),
+                                        // Dynamic security parameters row
+                                        Row(
+                                          children: [
+                                            Text(
+                                              "KIDS:",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                color: Colors.white38,
+                                                fontSize: 9.5,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4.0),
+                                            SizedBox(
+                                              height: 18.0,
+                                              width: 28.0,
+                                              child: Switch(
+                                                value: isKidsMap[role] ?? false,
+                                                activeColor: Colors.orangeAccent,
+                                                onChanged: (val) {
+                                                  setSheetState(() {
+                                                    isKidsMap[role] = val;
+                                                  });
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12.0),
+                                            Text(
+                                              "LOCK:",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                color: Colors.white38,
+                                                fontSize: 9.5,
+                                                fontWeight: FontWeight.bold,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 4.0),
+                                            SizedBox(
+                                              height: 18.0,
+                                              width: 28.0,
+                                              child: Switch(
+                                                value: hasPinMap[role] ?? false,
+                                                activeColor: primaryColor,
+                                                onChanged: (val) {
+                                                  setSheetState(() {
+                                                    hasPinMap[role] = val;
+                                                  });
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8.0),
+                                            if (hasPinMap[role] == true)
+                                              Expanded(
+                                                child: Container(
+                                                  height: 24.0,
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white.withOpacity(0.04),
+                                                    borderRadius: BorderRadius.circular(6.0),
+                                                    border: Border.all(color: Colors.white12),
+                                                  ),
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6.0),
+                                                  child: TextField(
+                                                    controller: pinControllers[role],
+                                                    keyboardType: TextInputType.number,
+                                                    maxLength: 4,
+                                                    obscureText: true,
+                                                    style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 11.0),
+                                                    decoration: const InputDecoration(
+                                                      hintText: "4-Digit PIN",
+                                                      counterText: "",
+                                                      border: InputBorder.none,
+                                                      contentPadding: EdgeInsets.only(bottom: 15.0),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
                                         ),
                                       ],
                                     ),
@@ -1819,7 +2135,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   await prefs.setString('selected_external_player_package', selectedPlayerPackage);
                                   await prefs.setString('selected_external_player_name', selectedPlayerName);
                                   
-                                  // Save profile custom names and avatars
+                                  // Save profile custom names, avatars, PINs, and Kids flags
                                   final roles = ['Director', 'Producer', 'Critic', 'Viewer'];
                                   for (final role in roles) {
                                     final customName = nameControllers[role]!.text.trim();
@@ -1832,6 +2148,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                     } else {
                                       await prefs.remove('profile_avatar_$role');
                                     }
+                                    
+                                    // Save PIN configurations
+                                    final hasPin = hasPinMap[role] ?? false;
+                                    await prefs.setBool('profile_has_pin_$role', hasPin);
+                                    final pinVal = pinControllers[role]!.text.trim();
+                                    if (pinVal.length == 4) {
+                                      await prefs.setString('profile_pin_$role', pinVal);
+                                    }
+                                    
+                                    // Save Kids Mode configuration
+                                    final isKids = isKidsMap[role] ?? false;
+                                    await prefs.setBool('profile_is_kids_$role', isKids);
                                   }
                                   
                                   // Re-test connection for validation
@@ -1884,4 +2212,614 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       },
     );
   }
+
+  void _showAnalyticsDashboard(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.7),
+      builder: (context) {
+        final primaryColor = Theme.of(context).primaryColor; // Use theme's primaryColor
+        return ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30.0)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+            child: Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F0F12).withOpacity(0.95),
+                border: Border(
+                  top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1.5),
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+              child: FutureBuilder<Map<String, dynamic>>(
+                future: ApiService.fetchProfileWatchStats(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+
+                  final stats = snapshot.data ?? {
+                    'totalWatchTimeMs': 32400000,
+                    'genreSplits': { "Sci-Fi": 12, "Action": 8, "Drama": 5, "Anime": 3 },
+                    'heatmaps': {
+                      "default_movie": [2, 5, 8, 12, 10, 15, 3, 2, 7, 1]
+                    }
+                  };
+
+                  final double totalHours = (stats['totalWatchTimeMs'] as int? ?? 32400000) / 3600000.0;
+                  final genreSplits = Map<String, dynamic>.from(stats['genreSplits'] ?? { "Sci-Fi": 12, "Action": 8, "Drama": 5, "Anime": 3 });
+                  
+                  final Map<String, double> donutData = {};
+                  genreSplits.forEach((k, v) {
+                    donutData[k] = (v as num).toDouble();
+                  });
+
+                  final List<double> weeklyData = [1.5, 2.0, 0.8, 3.2, 1.0, 4.5, totalHours > 10.0 ? 5.0 : 2.5];
+
+                  final List<double> heatmapPoints = List<double>.from(
+                    (stats['heatmaps']?['default_movie'] as List?)?.map((x) => (x as num).toDouble()) ?? 
+                    [2.0, 5.0, 8.0, 12.0, 10.0, 15.0, 3.0, 2.0, 7.0, 1.0]
+                  );
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "CINEMATIC ANALYTICS",
+                                style: GoogleFonts.cinzel(
+                                  fontSize: 20.0,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 4.0),
+                              Text(
+                                "Mobile statistics for profile: ${ApiService.activeProfile ?? 'Viewer'}",
+                                style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: Colors.white60),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20.0),
+
+                      Expanded(
+                        child: ListView(
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.02),
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: Colors.white12),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text("TOTAL VIEWING", style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10.0, fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 8.0),
+                                        Text("${totalHours.toStringAsFixed(1)} Hours", style: GoogleFonts.plusJakartaSans(color: primaryColor, fontSize: 18.0, fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12.0),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.02),
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: Colors.white12),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text("FAVORITE GENRE", style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10.0, fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 8.0),
+                                        Text(donutData.isNotEmpty ? donutData.entries.first.key : "N/A", style: GoogleFonts.plusJakartaSans(color: Colors.purpleAccent, fontSize: 18.0, fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 20.0),
+
+                            Container(
+                              padding: const EdgeInsets.all(16.0),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.02),
+                                borderRadius: BorderRadius.circular(16.0),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 100.0,
+                                    height: 100.0,
+                                    child: CustomPaint(
+                                      painter: DonutChartPainter(
+                                        data: donutData,
+                                        colors: [
+                                          primaryColor,
+                                          Colors.purpleAccent,
+                                          Colors.cyanAccent,
+                                          Colors.amberAccent,
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16.0),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "GENRE SEGMENTS",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 11.0,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white70,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6.0),
+                                        ...donutData.entries.map((e) {
+                                          final idx = donutData.keys.toList().indexOf(e.key);
+                                          final col = [
+                                            primaryColor,
+                                            Colors.purpleAccent,
+                                            Colors.cyanAccent,
+                                            Colors.amberAccent,
+                                          ][idx % 4];
+                                          return Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 2.0),
+                                            child: Row(
+                                              children: [
+                                                Container(width: 6.0, height: 6.0, decoration: BoxDecoration(shape: BoxShape.circle, color: col)),
+                                                const SizedBox(width: 6.0),
+                                                Text("${e.key}: ${e.value.toInt()} streams", style: GoogleFonts.plusJakartaSans(color: Colors.white54, fontSize: 11.0)),
+                                              ],
+                                            ),
+                                          );
+                                        }).toList(),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20.0),
+
+                            Container(
+                              padding: const EdgeInsets.all(16.0),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.02),
+                                borderRadius: BorderRadius.circular(16.0),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text("WEEKLY WATCH TRENDS", style: GoogleFonts.plusJakartaSans(fontSize: 11.0, fontWeight: FontWeight.bold, color: Colors.white70)),
+                                  const SizedBox(height: 20.0),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: List.generate(7, (i) {
+                                      final double h = weeklyData[i];
+                                      final String day = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][i];
+                                      return Column(
+                                        children: [
+                                          Container(
+                                            width: 12.0,
+                                            height: (h / 6.0) * 80.0,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: Alignment.topCenter,
+                                                end: Alignment.bottomCenter,
+                                                colors: [primaryColor, primaryColor.withOpacity(0.3)],
+                                              ),
+                                              borderRadius: BorderRadius.circular(3.0),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6.0),
+                                          Text(day, style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 9.0)),
+                                        ],
+                                      );
+                                    }),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 20.0),
+
+                            Container(
+                              padding: const EdgeInsets.all(16.0),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.02),
+                                borderRadius: BorderRadius.circular(16.0),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text("TIMELINE PLAYHEAD HEATMAP", style: GoogleFonts.plusJakartaSans(fontSize: 11.0, fontWeight: FontWeight.bold, color: Colors.white70)),
+                                  const SizedBox(height: 4.0),
+                                  Text("Seeking and checkpoint skip spikes", style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10.0)),
+                                  const SizedBox(height: 16.0),
+                                  SizedBox(
+                                    height: 50.0,
+                                    width: double.infinity,
+                                    child: CustomPaint(
+                                      painter: HeatmapPainter(
+                                        values: heatmapPoints,
+                                        accentColor: primaryColor,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showWatchPartyLobby(BuildContext context) {
+    final roomCodeController = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.7),
+      builder: (context) {
+        final primaryColor = Theme.of(context).primaryColor;
+        return ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30.0)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+            child: Container(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 32.0,
+                left: 24.0,
+                right: 24.0,
+                top: 32.0,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F0F12).withOpacity(0.95),
+                border: Border(
+                  top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1.5),
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        "CO-WATCHING PARTY",
+                        style: GoogleFonts.cinzel(
+                          fontSize: 20.0,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, color: Colors.white60),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6.0),
+                  Text(
+                    "Join private rooms to watch synced movies and share floating emoji reactions in real-time.",
+                    style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                  ),
+                  const SizedBox(height: 24.0),
+
+                  Text(
+                    "HOST A NEW PARTY",
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11.0,
+                      fontWeight: FontWeight.bold,
+                      color: primaryColor,
+                    ),
+                  ),
+                  const SizedBox(height: 10.0),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      final defaultMedia = mockMediaDatabase.first;
+                      final room = await ApiService.createWatchParty(
+                        defaultMedia.id.toString(),
+                        defaultMedia.title,
+                      );
+                      
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => TvPlayerScreen(
+                              mediaItem: defaultMedia,
+                              watchPartyRoomId: room['roomId'] ?? '123456',
+                              isHost: true,
+                            ),
+                          ),
+                        );
+                        
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text("Host Party Room ${room['roomId']} created successfully!"),
+                            backgroundColor: primaryColor,
+                          ),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.add_to_queue_rounded, color: Colors.black, size: 18),
+                    label: Text(
+                      "Create Host Room (Featured: Inception)",
+                      style: GoogleFonts.plusJakartaSans(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12.0),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24.0),
+                  const Divider(color: Colors.white10),
+                  const SizedBox(height: 24.0),
+
+                  Text(
+                    "JOIN ACTIVE PARTY ROOM",
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11.0,
+                      fontWeight: FontWeight.bold,
+                      color: primaryColor,
+                    ),
+                  ),
+                  const SizedBox(height: 10.0),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          height: 48.0,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(12.0),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          child: TextField(
+                            controller: roomCodeController,
+                            keyboardType: TextInputType.number,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 16.0),
+                            decoration: InputDecoration(
+                              hintText: "Enter 6-digit Code",
+                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.only(bottom: 2.0),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12.0),
+                      ElevatedButton(
+                        onPressed: () async {
+                          final code = roomCodeController.text.trim();
+                          if (code.length != 6) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Please enter a valid 6-digit room code.")),
+                            );
+                            return;
+                          }
+                          
+                          final room = await ApiService.getWatchPartyRoom(code);
+                          if (room.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Active co-watching room not found.")),
+                            );
+                            return;
+                          }
+                          
+                          final listingId = room['listingId']?.toString() ?? '1';
+                          final match = mockMediaDatabase.firstWhere(
+                            (x) => x.id.toString() == listingId,
+                            orElse: () => mockMediaDatabase.first,
+                          );
+
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                            
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => TvPlayerScreen(
+                                  mediaItem: match,
+                                  watchPartyRoomId: code,
+                                  isHost: false,
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white.withOpacity(0.08),
+                          side: const BorderSide(color: Colors.white24),
+                          minimumSize: const Size(100, 48),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12.0),
+                          ),
+                        ),
+                        child: Text(
+                          "Join Party",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class DonutChartPainter extends CustomPainter {
+  final Map<String, double> data;
+  final List<Color> colors;
+
+  DonutChartPainter({required this.data, required this.colors});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double total = data.values.fold(0.0, (sum, item) => sum + item);
+    if (total == 0) return;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    double startAngle = -3.1415926535 / 2; // Start from top
+    int index = 0;
+
+    for (final entry in data.entries) {
+      final sweepAngle = (entry.value / total) * 3.1415926535 * 2;
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 14.0
+        ..color = colors[index % colors.length]
+        ..strokeCap = SweepAngleIsEmpty(sweepAngle) ? StrokeCap.butt : StrokeCap.round;
+
+      // Draw a subtle outer shadow/glow for the segment
+      final glowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 20.0
+        ..color = colors[index % colors.length].withOpacity(0.15)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6.0);
+      
+      canvas.drawArc(rect, startAngle + 0.05, sweepAngle - 0.1, false, glowPaint);
+      canvas.drawArc(rect, startAngle + 0.05, sweepAngle - 0.1, false, paint);
+
+      startAngle += sweepAngle;
+      index++;
+    }
+  }
+
+  bool SweepAngleIsEmpty(double angle) {
+    return angle <= 0.0;
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class HeatmapPainter extends CustomPainter {
+  final List<double> values;
+  final Color accentColor;
+
+  HeatmapPainter({required this.values, required this.accentColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.isEmpty) return;
+
+    final paint = Paint()
+      ..color = accentColor.withOpacity(0.8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0;
+
+    final fillPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          accentColor.withOpacity(0.35),
+          accentColor.withOpacity(0.00),
+        ],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
+      ..style = PaintingStyle.fill;
+
+    final path = Path();
+    final stepX = size.width / (values.length - 1);
+    final maxValue = values.fold(1.0, (maxVal, v) => v > maxVal ? v : maxVal);
+
+    path.moveTo(0, size.height - (values[0] / maxValue) * (size.height - 10));
+
+    for (int i = 0; i < values.length; i++) {
+      final x = i * stepX;
+      final y = size.height - (values[i] / maxValue) * (size.height - 10);
+      
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        final prevX = (i - 1) * stepX;
+        final prevY = size.height - (values[i - 1] / maxValue) * (size.height - 10);
+        final controlX1 = prevX + stepX / 2;
+        final controlY1 = prevY;
+        final controlX2 = prevX + stepX / 2;
+        final controlY2 = y;
+        path.cubicTo(controlX1, controlY1, controlX2, controlY2, x, y);
+      }
+    }
+
+    // Draw the glow shadow under the curve
+    canvas.drawPath(path, Paint()
+      ..color = accentColor.withOpacity(0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6.0
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0));
+
+    canvas.drawPath(path, paint);
+
+    // Close the path to fill it
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    path.close();
+
+    canvas.drawPath(path, fillPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

@@ -19,6 +19,8 @@ class TvPlayerScreen extends StatefulWidget {
   final String? channelId;
   final String? messageId;
   final String? streamUrl;
+  final String? watchPartyRoomId;
+  final bool isHost;
 
   const TvPlayerScreen({
     super.key,
@@ -27,6 +29,8 @@ class TvPlayerScreen extends StatefulWidget {
     this.channelId,
     this.messageId,
     this.streamUrl,
+    this.watchPartyRoomId,
+    this.isHost = false,
   });
 
   @override
@@ -55,7 +59,7 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
   String _selectedAudio = 'English [Stereo]';
   double _playbackSpeed = 1.0;
 
-  final List<String> _subtitleOptions = ['Off', 'English [SRT]', 'Spanish [SRT]', 'French [VTT]'];
+  final List<String> _subtitleOptions = ['Off', 'English [SRT]', 'Spanish [SRT]', 'French [VTT]', 'Subtitle Styling Customizer'];
   final List<String> _audioOptions = ['English [Stereo]', 'Spanish [Dolby 5.1]', 'French [Stereo]', 'Director Commentary'];
   final List<double> _speedOptions = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -66,6 +70,34 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
   // Sync Watch Progress Timer
   Timer? _progressSyncTimer;
 
+  // Subtitle customizer states
+  bool _showSubtitleStylesSheet = false;
+  double _subtitleFontSize = 24.0;
+  String _subtitleColorName = 'White';
+  double _subtitleBackgroundOpacity = 0.4;
+  double _subtitleOutlineWeight = 2.0;
+  List<dynamic> _currentSubtitleTracks = [];
+  String _activeSubtitleText = '';
+
+  // Smart Skip & Autoplay states
+  bool _showSkipIntro = false;
+  bool _showNextEpisodeCountdown = false;
+  int _nextEpisodeCountdownSeconds = 5;
+  Timer? _autoplayTimer;
+  bool _didTriggerAutoplay = false;
+  late FocusNode _skipIntroFocusNode;
+  late FocusNode _nextEpisodeFocusNode;
+
+  // Watch Party states
+  String? _watchPartyRoomId;
+  bool _isWatchPartyHost = false;
+  Timer? _watchPartySyncTimer;
+  List<Map<String, dynamic>> _floatingEmojis = [];
+  Timer? _emojiTicker;
+  final List<String> _reactionEmojis = ['❤️', '😂', '😮', '🔥'];
+  late FocusNode _subtitleStylesFocusNode;
+  late FocusNode _emojiReactionFocusNode;
+
   // Focus nodes for D-pad Navigation
   late FocusNode _screenFocusNode;
   late FocusNode _backFocusNode;
@@ -75,6 +107,14 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
   late FocusNode _rewindFocusNode;
   late FocusNode _playPauseFocusNode;
   late FocusNode _forwardFocusNode;
+  late FocusNode _highlightFocusNode;
+  late FocusNode _dialogCopyFocusNode;
+  late FocusNode _dialogDismissFocusNode;
+
+  // Highlight/Scissors state variables
+  bool _showHighlightDialog = false;
+  String _highlightShareCode = '';
+  bool _isCreatingHighlight = false;
 
   // Unified metadata fields mapping both models
   late int _mediaId;
@@ -83,7 +123,12 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
   late String _releaseYear;
   late String _durationInfo;
 
-  bool get _isAnySheetOpen => _showSubtitlesSheet || _showAudioSheet || _showSpeedSheet;
+  bool get _isAnySheetOpen =>
+      _showSubtitlesSheet ||
+      _showAudioSheet ||
+      _showSpeedSheet ||
+      _showSubtitleStylesSheet ||
+      _showHighlightDialog;
 
   @override
   void initState() {
@@ -102,10 +147,16 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
 
     // Sync progress periodically
     _progressSyncTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (_controller.value.isInitialized && _controller.value.isPlaying) {
+      if (_controller.value.isInitialized && _controller.value.isPlaying && _watchPartyRoomId == null) {
         _syncProgress();
       }
     });
+
+    _watchPartyRoomId = widget.watchPartyRoomId;
+    _isWatchPartyHost = widget.isHost;
+    if (_watchPartyRoomId != null) {
+      _startWatchPartySync();
+    }
 
     // Request initial screen focus for D-pad capture
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -147,6 +198,13 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
     _rewindFocusNode = FocusNode(debugLabel: "TvRewindButton");
     _playPauseFocusNode = FocusNode(debugLabel: "TvPlayPauseButton");
     _forwardFocusNode = FocusNode(debugLabel: "TvForwardButton");
+    _highlightFocusNode = FocusNode(debugLabel: "TvHighlightButton");
+    _dialogCopyFocusNode = FocusNode(debugLabel: "TvHighlightDialogCopyButton");
+    _dialogDismissFocusNode = FocusNode(debugLabel: "TvHighlightDialogDismissButton");
+    _subtitleStylesFocusNode = FocusNode(debugLabel: "TvSubtitleStylesButton");
+    _emojiReactionFocusNode = FocusNode(debugLabel: "TvEmojiReactionButton");
+    _skipIntroFocusNode = FocusNode(debugLabel: "TvSkipIntroButton");
+    _nextEpisodeFocusNode = FocusNode(debugLabel: "TvNextEpisodeButton");
   }
 
   void _initController() {
@@ -205,7 +263,102 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
 
   void _videoListener() {
     if (mounted) {
+      _updateSubtitles();
+      _checkSmartSkip();
       setState(() {});
+    }
+  }
+
+  void _checkSmartSkip() {
+    if (!_controller.value.isInitialized) return;
+    final pos = _controller.value.position;
+    final dur = _controller.value.duration;
+
+    // 1. Skip Intro Window (5s to 90s)
+    if (pos.inSeconds >= 5 && pos.inSeconds <= 90) {
+      if (!_showSkipIntro) {
+        setState(() {
+          _showSkipIntro = true;
+        });
+      }
+    } else {
+      if (_showSkipIntro) {
+        setState(() {
+          _showSkipIntro = false;
+        });
+      }
+    }
+
+    // 2. Outro Autoplay Window (last 30s)
+    if (dur.inSeconds > 90 && dur.inSeconds - pos.inSeconds <= 30) {
+      if (!_showNextEpisodeCountdown && !_didTriggerAutoplay) {
+        _startAutoplayCountdown();
+      }
+    } else {
+      if (pos.inSeconds < dur.inSeconds - 45) {
+        // Reset if sought backwards
+        if (_didTriggerAutoplay || _showNextEpisodeCountdown) {
+          setState(() {
+            _didTriggerAutoplay = false;
+            _showNextEpisodeCountdown = false;
+            _autoplayTimer?.cancel();
+          });
+        }
+      }
+    }
+  }
+
+  void _startAutoplayCountdown() {
+    setState(() {
+      _showNextEpisodeCountdown = true;
+      _nextEpisodeCountdownSeconds = 5;
+    });
+    
+    // Autofocus the next episode countdown D-pad button
+    _nextEpisodeFocusNode.requestFocus();
+    
+    _autoplayTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          if (_nextEpisodeCountdownSeconds > 1) {
+            _nextEpisodeCountdownSeconds--;
+          } else {
+            _autoplayTimer?.cancel();
+            _triggerAutoplay();
+          }
+        });
+      } else {
+        _autoplayTimer?.cancel();
+      }
+    });
+  }
+
+  void _triggerAutoplay() {
+    if (_didTriggerAutoplay) return;
+    _didTriggerAutoplay = true;
+    _autoplayTimer?.cancel();
+    
+    // Find next episode dynamically
+    final nextIndex = mockMediaDatabase.indexWhere((x) => x.id == widget.mediaItem?.id) + 1;
+    if (nextIndex < mockMediaDatabase.length) {
+      final nextItem = mockMediaDatabase[nextIndex];
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (context) => TvPlayerScreen(
+            mediaItem: nextItem,
+            watchPartyRoomId: _watchPartyRoomId,
+            isHost: _isWatchPartyHost,
+          ),
+        ),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Autoplay: Launching next episode: ${nextItem.title}"),
+          backgroundColor: Theme.of(context).primaryColor,
+        ),
+      );
+    } else {
+      Navigator.pop(context);
     }
   }
 
@@ -218,6 +371,9 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
     _skipLeftTimer?.cancel();
     _skipRightTimer?.cancel();
     _toastTimer?.cancel();
+    _watchPartySyncTimer?.cancel();
+    _emojiTicker?.cancel();
+    _autoplayTimer?.cancel();
 
     _screenFocusNode.dispose();
     _backFocusNode.dispose();
@@ -227,6 +383,13 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
     _rewindFocusNode.dispose();
     _playPauseFocusNode.dispose();
     _forwardFocusNode.dispose();
+    _highlightFocusNode.dispose();
+    _dialogCopyFocusNode.dispose();
+    _dialogDismissFocusNode.dispose();
+    _subtitleStylesFocusNode.dispose();
+    _emojiReactionFocusNode.dispose();
+    _skipIntroFocusNode.dispose();
+    _nextEpisodeFocusNode.dispose();
 
     _controller.removeListener(_videoListener);
     _controller.dispose();
@@ -251,6 +414,235 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
         duration: _controller.value.duration,
       );
     }
+  }
+
+  void _createHighlightClip() async {
+    _resetControlsTimer();
+    if (!_controller.value.isInitialized) return;
+
+    setState(() {
+      _isCreatingHighlight = true;
+      _showHighlightDialog = true;
+      _highlightShareCode = '';
+    });
+
+    // Request focus on the dialog copy button once it appears
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        _dialogCopyFocusNode.requestFocus();
+      }
+    });
+
+    final end = _controller.value.position;
+    Duration start = end - const Duration(seconds: 15);
+    if (start.isNegative) {
+      start = Duration.zero;
+    }
+
+    try {
+      final result = await ApiService.createHighlight(
+        mediaId: _mediaId.toString(),
+        startTime: start.inMilliseconds,
+        endTime: end.inMilliseconds,
+      );
+
+      if (mounted) {
+        setState(() {
+          _highlightShareCode = result['code'] ?? 'CINE99';
+          _isCreatingHighlight = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _highlightShareCode = 'ERR500';
+          _isCreatingHighlight = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildHighlightOverlay() {
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          // Dark background dim
+          Container(
+            color: Colors.black.withOpacity(0.75),
+          ),
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  width: 500,
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F0F12).withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: const Color(0xFFD4AF37).withOpacity(0.4),
+                      width: 2.0,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFD4AF37).withOpacity(0.2),
+                        blurRadius: 30,
+                        spreadRadius: 3,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Header with Amber Scissors
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD4AF37).withOpacity(0.15),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.content_cut_rounded,
+                              color: Color(0xFFD4AF37),
+                              size: 28,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            "HIGHLIGHT CREATED",
+                            style: GoogleFonts.outfit(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        "A 15-second digital highlight clip has been indexed.\nUse the 6-digit TV lookup code below to watch or share.",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.dmSans(
+                          color: Colors.white70,
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      
+                      // 6-digit Code Box / Spinner
+                      _isCreatingHighlight
+                          ? const Column(
+                              children: [
+                                SpinKitFadingCircle(
+                                  color: Color(0xFFD4AF37),
+                                  size: 50.0,
+                                ),
+                                SizedBox(height: 16),
+                                Text(
+                                  "Generating Code...",
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.04),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: const Color(0xFFD4AF37).withOpacity(0.2),
+                                  width: 1.5,
+                                ),
+                              ),
+                              child: Text(
+                                _highlightShareCode,
+                                style: GoogleFonts.outfit(
+                                  color: const Color(0xFFD4AF37),
+                                  fontSize: 44,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 10,
+                                ),
+                              ),
+                            ),
+                      
+                      const SizedBox(height: 32),
+                      
+                      // D-pad focusable buttons
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TvFocusButton(
+                              focusNode: _dialogDismissFocusNode,
+                              onPressed: () {
+                                setState(() {
+                                  _showHighlightDialog = false;
+                                });
+                                _playPauseFocusNode.requestFocus();
+                              },
+                              child: Center(
+                                child: Text(
+                                  "DISMISS",
+                                  style: GoogleFonts.dmSans(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TvFocusButton(
+                              focusNode: _dialogCopyFocusNode,
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: _highlightShareCode));
+                                _showToast("Code copied: $_highlightShareCode");
+                                setState(() {
+                                  _showHighlightDialog = false;
+                                });
+                                _playPauseFocusNode.requestFocus();
+                              },
+                              child: Center(
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.copy_rounded, color: Colors.black, size: 16),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      "COPY CODE",
+                                      style: GoogleFonts.dmSans(
+                                        color: Colors.black,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _startControlsTimer() {
@@ -336,6 +728,8 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
       _showSubtitlesSheet = false;
       _showAudioSheet = false;
       _showSpeedSheet = false;
+      _showSubtitleStylesSheet = false;
+      _showHighlightDialog = false;
     });
     // Request focus back onto the root screen or controls
     if (_showControls) {
@@ -550,9 +944,30 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
                 isOpen: _showSubtitlesSheet,
                 options: _subtitleOptions,
                 selectedOption: _selectedSubtitle,
-                onSelected: (opt) {
+                onSelected: (opt) async {
+                  if (opt == 'Subtitle Styling Customizer') {
+                    setState(() {
+                      _showSubtitlesSheet = false;
+                      _showSubtitleStylesSheet = true;
+                    });
+                    return;
+                  }
                   setState(() {
                     _selectedSubtitle = opt;
+                  });
+                  if (opt == 'Off') {
+                    setState(() {
+                      _currentSubtitleTracks = [];
+                      _activeSubtitleText = '';
+                    });
+                  } else {
+                    final lang = opt.contains('Spanish') ? 'es' : opt.contains('French') ? 'fr' : 'en';
+                    final tracks = await ApiService.fetchSubtitleTracks(widget.streamUrl ?? 'http://cinegram.io/movie.mp4', lang);
+                    setState(() {
+                      _currentSubtitleTracks = tracks;
+                    });
+                  }
+                  setState(() {
                     _showSubtitlesSheet = false;
                   });
                   _showToast("Subtitles: $opt");
@@ -594,6 +1009,313 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
                 },
                 onClose: _closeAllSheets,
               ),
+
+              // SUBTITLE STYLE DRAWER
+              _buildSubtitleStylesDrawer(),
+
+              // SUBTITLE DYNAMIC DISPLAY
+              if (_selectedSubtitle != 'Off' && _activeSubtitleText.isNotEmpty)
+                Positioned(
+                  bottom: _showControls ? 140.0 : 48.0,
+                  left: 64.0,
+                  right: 64.0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(_subtitleBackgroundOpacity),
+                        borderRadius: BorderRadius.circular(8.0),
+                      ),
+                      child: Stack(
+                        children: [
+                          if (_subtitleOutlineWeight > 0.0)
+                            Text(
+                              _activeSubtitleText,
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: _subtitleFontSize,
+                                fontWeight: FontWeight.bold,
+                                foreground: Paint()
+                                  ..style = PaintingStyle.stroke
+                                  ..strokeWidth = _subtitleOutlineWeight
+                                  ..color = Colors.black,
+                              ),
+                            ),
+                          Text(
+                            _activeSubtitleText,
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: _subtitleFontSize,
+                              fontWeight: FontWeight.bold,
+                              color: _subtitleColorName == 'White'
+                                  ? Colors.white
+                                  : _subtitleColorName == 'Gold'
+                                      ? const Color(0xFFFFD700)
+                                      : _subtitleColorName == 'Mint'
+                                          ? Colors.greenAccent
+                                          : Colors.cyanAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // ⏩ SMART SKIP INTRO OVERLAY
+              if (_showSkipIntro)
+                Positioned(
+                  bottom: _showControls ? 200.0 : 100.0,
+                  right: 48.0,
+                  child: Focus(
+                    focusNode: _skipIntroFocusNode,
+                    onKeyEvent: (node, event) {
+                      if (event is KeyDownEvent &&
+                          (event.logicalKey == LogicalKeyboardKey.enter ||
+                           event.logicalKey == LogicalKeyboardKey.select)) {
+                        _controller.seekTo(const Duration(seconds: 90));
+                        setState(() {
+                          _showSkipIntro = false;
+                        });
+                        _screenFocusNode.requestFocus();
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: Builder(
+                      builder: (context) {
+                        final bool hasFocus = Focus.of(context).hasFocus;
+                        return GestureDetector(
+                          onTap: () {
+                            _controller.seekTo(const Duration(seconds: 90));
+                            setState(() {
+                              _showSkipIntro = false;
+                            });
+                            _screenFocusNode.requestFocus();
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+                            decoration: BoxDecoration(
+                              color: hasFocus 
+                                  ? Theme.of(context).primaryColor.withOpacity(0.9) 
+                                  : Colors.black.withOpacity(0.7),
+                              borderRadius: BorderRadius.circular(30.0),
+                              border: Border.all(
+                                color: hasFocus ? Colors.white : Theme.of(context).primaryColor, 
+                                width: 2.0,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Theme.of(context).primaryColor.withOpacity(hasFocus ? 0.6 : 0.2),
+                                  blurRadius: 15.0,
+                                  spreadRadius: 2.0,
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.fast_forward_rounded, 
+                                  color: hasFocus ? Colors.black : Colors.white, 
+                                  size: 20.0,
+                                ),
+                                const SizedBox(width: 8.0),
+                                Text(
+                                  "SKIP INTRO",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: hasFocus ? Colors.black : Colors.white,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 13.0,
+                                    letterSpacing: 1.0,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                    ),
+                  ),
+                ),
+
+              // 🧸 SMART NEXT EPISODE COUNTDOWN OVERLAY
+              if (_showNextEpisodeCountdown)
+                Positioned(
+                  bottom: _showControls ? 200.0 : 100.0,
+                  right: 48.0,
+                  child: Focus(
+                    focusNode: _nextEpisodeFocusNode,
+                    onKeyEvent: (node, event) {
+                      if (event is KeyDownEvent &&
+                          (event.logicalKey == LogicalKeyboardKey.enter ||
+                           event.logicalKey == LogicalKeyboardKey.select)) {
+                        _triggerAutoplay();
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: Builder(
+                      builder: (context) {
+                        final bool hasFocus = Focus.of(context).hasFocus;
+                        return GestureDetector(
+                          onTap: _triggerAutoplay,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            width: 260.0,
+                            padding: const EdgeInsets.all(16.0),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0F0F12).withOpacity(0.9),
+                              borderRadius: BorderRadius.circular(20.0),
+                              border: Border.all(
+                                color: hasFocus ? Theme.of(context).primaryColor : Colors.white12, 
+                                width: 2.0,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.5),
+                                  blurRadius: 20.0,
+                                  spreadRadius: 2.0,
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.queue_play_next_rounded, color: Colors.orangeAccent, size: 20.0),
+                                    const SizedBox(width: 8.0),
+                                    Text(
+                                      "UP NEXT IN $_nextEpisodeCountdownSeconds...",
+                                      style: GoogleFonts.plusJakartaSans(
+                                        color: Colors.orangeAccent,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 11.0,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8.0),
+                                Text(
+                                  "Subsequent Episode",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14.0,
+                                  ),
+                                ),
+                                const SizedBox(height: 12.0),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 36.0,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: hasFocus ? Theme.of(context).primaryColor : Colors.white.withOpacity(0.06),
+                                      borderRadius: BorderRadius.circular(10.0),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      "PLAY NOW",
+                                      style: GoogleFonts.plusJakartaSans(
+                                        color: hasFocus ? Colors.black : Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 11.5,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                    ),
+                  ),
+                ),
+
+              // WATCH PARTY REACTION BAR
+              if (_watchPartyRoomId != null && _showControls)
+                Positioned(
+                  bottom: 220.0,
+                  left: 64.0,
+                  right: 64.0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.6),
+                        borderRadius: BorderRadius.circular(20.0),
+                        border: Border.all(color: Theme.of(context).primaryColor.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            "SEND REACTION: ",
+                            style: GoogleFonts.plusJakartaSans(
+                              color: Colors.white70,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.0,
+                            ),
+                          ),
+                          const SizedBox(width: 8.0),
+                          ..._reactionEmojis.map((emoji) {
+                            return Focus(
+                              focusNode: emoji == '❤️' ? _emojiReactionFocusNode : null,
+                              child: Builder(
+                                builder: (context) {
+                                  final bool hasFocus = Focus.of(context).hasFocus;
+                                  return InkWell(
+                                    onTap: () => _sendWatchPartyEmoji(emoji),
+                                    child: AnimatedContainer(
+                                      duration: const Duration(milliseconds: 200),
+                                      margin: const EdgeInsets.symmetric(horizontal: 6.0),
+                                      padding: const EdgeInsets.all(8.0),
+                                      decoration: BoxDecoration(
+                                        color: hasFocus ? Theme.of(context).primaryColor.withOpacity(0.2) : Colors.transparent,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: hasFocus ? Theme.of(context).primaryColor : Colors.transparent, width: 1.5),
+                                      ),
+                                      child: Text(
+                                        emoji,
+                                        style: const TextStyle(fontSize: 22.0),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              // FLOATING EMOJI ANIMATION SYSTEM
+              ..._floatingEmojis.map((item) {
+                return Positioned(
+                  bottom: 120.0 + item['y'],
+                  left: MediaQuery.of(context).size.width / 2 + item['x'],
+                  child: Opacity(
+                    opacity: item['opacity'],
+                    child: Text(
+                      item['emoji'],
+                      style: const TextStyle(fontSize: 48.0),
+                    ),
+                  ),
+                );
+              }).toList(),
+
+              if (_showHighlightDialog)
+                _buildHighlightOverlay(),
             ],
           ),
         ),
@@ -891,6 +1613,28 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
                   onPressed: _seekForward10s,
                   child: const Icon(Icons.forward_10_rounded, color: Colors.white, size: 24),
                 ),
+                const SizedBox(width: 24),
+
+                // TV D-pad Focusable Highlight Scissors Button
+                TvFocusButton(
+                  focusNode: _highlightFocusNode,
+                  onPressed: _createHighlightClip,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.content_cut_rounded, color: Theme.of(context).primaryColor, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        "HIGHLIGHT",
+                        style: GoogleFonts.dmSans(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(width: 40),
 
                 // Remote D-pad control guide badge
@@ -1158,6 +1902,304 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
               ],
             )
           ],
+        ),
+      ),
+    );
+  }
+  void _startWatchPartySync() {
+    _watchPartySyncTimer = Timer.periodic(const Duration(milliseconds: 1500), (timer) {
+      if (mounted && _controller.value.isInitialized) {
+        _syncWatchPartyRoom();
+      }
+    });
+  }
+
+  Future<void> _syncWatchPartyRoom() async {
+    if (_watchPartyRoomId == null) return;
+    try {
+      if (_isWatchPartyHost) {
+        final room = await ApiService.updateWatchPartyRoom(
+          _watchPartyRoomId!,
+          playheadMs: _controller.value.position.inMilliseconds,
+          state: _controller.value.isPlaying ? 'playing' : 'paused',
+        );
+        _handleRoomSyncData(room);
+      } else {
+        final room = await ApiService.getWatchPartyRoom(_watchPartyRoomId!);
+        _handleRoomSyncData(room);
+      }
+    } catch (e) {
+      developer.log("Error syncing watch party room coordinates", error: e, name: "TvPlayerScreen");
+    }
+  }
+
+  int _lastHandledReactionTime = 0;
+  void _handleRoomSyncData(Map<String, dynamic> room) {
+    if (room.isEmpty) return;
+    
+    if (!_isWatchPartyHost) {
+      final hostState = room['state'] ?? 'paused';
+      final hostPlayhead = room['playheadMs'] as int? ?? 0;
+      
+      if (hostState == 'playing' && !_controller.value.isPlaying) {
+        _controller.play();
+      } else if (hostState == 'paused' && _controller.value.isPlaying) {
+        _controller.pause();
+      }
+      
+      final diff = (hostPlayhead - _controller.value.position.inMilliseconds).abs();
+      if (diff > 1500) {
+        _controller.seekTo(Duration(milliseconds: hostPlayhead));
+      }
+    }
+
+    final reactions = List<dynamic>.from(room['reactions'] ?? []);
+    for (final reaction in reactions) {
+      final time = reaction['time'] as int? ?? 0;
+      final emoji = reaction['emoji'] as String? ?? '';
+      if (time > _lastHandledReactionTime && emoji.isNotEmpty) {
+        _triggerFloatingEmoji(emoji);
+        _lastHandledReactionTime = time;
+      }
+    }
+  }
+
+  Future<void> _sendWatchPartyEmoji(String emoji) async {
+    if (_watchPartyRoomId == null) return;
+    try {
+      final room = await ApiService.updateWatchPartyRoom(_watchPartyRoomId!, reactionEmoji: emoji);
+      _handleRoomSyncData(room);
+      _triggerFloatingEmoji(emoji);
+    } catch (e) {
+      developer.log("Error sending emoji reaction", error: e, name: "TvPlayerScreen");
+    }
+  }
+
+  void _triggerFloatingEmoji(String emoji) {
+    final randomX = (50.0 - (100.0 * (DateTime.now().millisecond % 10) / 10.0));
+    setState(() {
+      _floatingEmojis.add({
+        'emoji': emoji,
+        'x': randomX,
+        'y': 0.0,
+        'opacity': 1.0,
+        'time': DateTime.now().millisecondsSinceEpoch,
+      });
+    });
+    _startEmojiTicker();
+  }
+
+  void _startEmojiTicker() {
+    if (_emojiTicker != null && _emojiTicker!.isActive) return;
+    _emojiTicker = Timer.periodic(const Duration(milliseconds: 30), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      
+      bool updated = false;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      
+      setState(() {
+        _floatingEmojis.removeWhere((item) {
+          final age = now - (item['time'] as int);
+          if (age > 2000) {
+            return true;
+          }
+          item['y'] = (age / 2000.0) * 400.0;
+          item['opacity'] = 1.0 - (age / 2000.0);
+          updated = true;
+          return false;
+        });
+      });
+      
+      if (_floatingEmojis.isEmpty) {
+        timer.cancel();
+      }
+    });
+  }
+
+  void _updateSubtitles() {
+    if (_selectedSubtitle == 'Off' || _currentSubtitleTracks.isEmpty) {
+      _activeSubtitleText = '';
+      return;
+    }
+    final double currentSec = _controller.value.position.inMilliseconds / 1000.0;
+    String newText = '';
+    for (final track in _currentSubtitleTracks) {
+      final double start = (track['startTime'] as num).toDouble();
+      final double end = (track['endTime'] as num).toDouble();
+      if (currentSec >= start && currentSec <= end) {
+        newText = track['text'] ?? '';
+        break;
+      }
+    }
+    _activeSubtitleText = newText;
+  }
+
+  Widget _buildSubtitleStylesDrawer() {
+    final primaryColor = Theme.of(context).primaryColor;
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      right: _showSubtitleStylesSheet ? 0 : -340,
+      top: 0,
+      bottom: 0,
+      width: 320,
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xEE0C0C14),
+              border: Border(
+                left: BorderSide(color: primaryColor, width: 1.5),
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "SUBTITLE STYLE",
+                      style: GoogleFonts.cinzel(
+                        color: primaryColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 20),
+                      onPressed: () {
+                        setState(() {
+                          _showSubtitleStylesSheet = false;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                const Divider(color: Colors.white12, height: 20, thickness: 1),
+                const SizedBox(height: 12),
+                
+                Expanded(
+                  child: ListView(
+                    children: [
+                      Text("FONT SIZE", style: GoogleFonts.plusJakartaSans(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [18.0, 22.0, 26.0, 32.0].map((size) {
+                          final isSel = _subtitleFontSize == size;
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                _subtitleFontSize = size;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isSel ? primaryColor.withOpacity(0.2) : Colors.white.withOpacity(0.04),
+                                border: Border.all(color: isSel ? primaryColor : Colors.white12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text("${size.toInt()}px", style: GoogleFonts.plusJakartaSans(color: isSel ? primaryColor : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+
+                      Text("TEXT COLOR", style: GoogleFonts.plusJakartaSans(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: {
+                          'White': Colors.white,
+                          'Gold': const Color(0xFFFFD700),
+                          'Mint': Colors.greenAccent,
+                          'Cyan': Colors.cyanAccent
+                        }.entries.map((entry) {
+                          final isSel = _subtitleColorName == entry.key;
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                _subtitleColorName = entry.key;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isSel ? entry.value.withOpacity(0.2) : Colors.white.withOpacity(0.04),
+                                border: Border.all(color: isSel ? entry.value : Colors.white12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(entry.key, style: GoogleFonts.plusJakartaSans(color: isSel ? entry.value : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+
+                      Text("BACKGROUND BOX OPACITY", style: GoogleFonts.plusJakartaSans(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [0.0, 0.2, 0.4, 0.6].map((op) {
+                          final isSel = _subtitleBackgroundOpacity == op;
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                _subtitleBackgroundOpacity = op;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isSel ? primaryColor.withOpacity(0.2) : Colors.white.withOpacity(0.04),
+                                border: Border.all(color: isSel ? primaryColor : Colors.white12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text("${(op * 100).toInt()}%", style: GoogleFonts.plusJakartaSans(color: isSel ? primaryColor : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+
+                      Text("TEXT OUTLINE WEIGHT", style: GoogleFonts.plusJakartaSans(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [0.0, 1.0, 2.0, 3.0].map((ow) {
+                          final isSel = _subtitleOutlineWeight == ow;
+                          return InkWell(
+                            onTap: () {
+                              setState(() {
+                                _subtitleOutlineWeight = ow;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isSel ? primaryColor.withOpacity(0.2) : Colors.white.withOpacity(0.04),
+                                border: Border.all(color: isSel ? primaryColor : Colors.white12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text("${ow.toInt()}px", style: GoogleFonts.plusJakartaSans(color: isSel ? primaryColor : Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

@@ -12,6 +12,7 @@ import '../services/api_service.dart';
 import 'details.dart';
 import 'profile_select.dart';
 import 'tv_iptv.dart';
+import 'tv_player.dart';
 import '../services/voice_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -507,6 +508,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
 
   // Remote helper overlay toggle
   bool _showRemoteHelper = true;
+  bool _isKidsProfileActive = false;
 
   // Supabase dynamic live sync categories
   List<MediaItem> _dynamicContinueWatching = [];
@@ -540,6 +542,20 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
         setState(() {
           _iptvM3uController.text = prefs.getString('iptv_m3u_url') ?? 'https://cinegram.io/playlist.m3u';
           _iptvEpgController.text = prefs.getString('iptv_epg_url') ?? 'http://cinegram.io/epg.xml';
+          
+          // Load active profile kids mode status
+          final activeProfile = ApiService.activeProfile ?? 'Viewer';
+          final roles = ['Director', 'Producer', 'Critic', 'Viewer'];
+          String? foundRole;
+          for (final role in roles) {
+            final savedName = prefs.getString('profile_name_$role') ?? role;
+            if (savedName == activeProfile) {
+              foundRole = role;
+              break;
+            }
+          }
+          final roleKey = foundRole ?? 'Viewer';
+          _isKidsProfileActive = prefs.getBool('profile_is_kids_$roleKey') ?? (roleKey == 'Viewer');
         });
       }
     });
@@ -856,13 +872,146 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
     });
   }
 
+  Future<bool> _showParentalGate(BuildContext context) async {
+    if (!_isKidsProfileActive) return true; // Direct pass if not Kids Mode
+    
+    final prefs = await SharedPreferences.getInstance();
+    final hasParentPin = prefs.getBool('profile_has_pin_Director') ?? true;
+    final parentPin = prefs.getString('profile_pin_Director') ?? '1234';
+    
+    if (!hasParentPin) return true; // Direct pass if no parent PIN set
+
+    final controller = TextEditingController();
+    bool isCorrect = false;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+              child: AlertDialog(
+                backgroundColor: const Color(0xFF0F0F12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20.0),
+                  side: const BorderSide(color: Colors.orangeAccent, width: 2.0),
+                ),
+                title: Center(
+                  child: Column(
+                    children: [
+                      const Icon(Icons.security_rounded, color: Colors.orangeAccent, size: 48.0),
+                      const SizedBox(height: 16.0),
+                      Text(
+                         "PARENTAL CONTROL GATE",
+                         style: GoogleFonts.cinzel(
+                           color: Colors.white,
+                           fontWeight: FontWeight.bold,
+                           fontSize: 20.0,
+                           letterSpacing: 1.0,
+                         ),
+                      ),
+                    ],
+                  ),
+                ),
+                content: SizedBox(
+                  width: 400.0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        "Please enter the Director (Parent) profile 4-digit PIN using your TV remote controller to authorize this action.",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white70, fontSize: 14.0, height: 1.4),
+                      ),
+                      const SizedBox(height: 24.0),
+                      Container(
+                        width: 200.0,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(12.0),
+                          border: Border.all(color: Colors.white24, width: 1.5),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                        child: TextField(
+                          controller: controller,
+                          keyboardType: TextInputType.number,
+                          maxLength: 4,
+                          obscureText: true,
+                          textAlign: TextAlign.center,
+                          autofocus: true,
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white, 
+                            fontSize: 24.0, 
+                            fontWeight: FontWeight.bold, 
+                            letterSpacing: 10.0,
+                          ),
+                          decoration: const InputDecoration(
+                            counterText: "",
+                            border: InputBorder.none,
+                            hintText: "••••",
+                            hintStyle: TextStyle(color: Colors.white24, letterSpacing: 5.0),
+                          ),
+                          onChanged: (val) {
+                            if (val.length == 4) {
+                              if (val == parentPin) {
+                                isCorrect = true;
+                                Navigator.pop(context);
+                              } else {
+                                controller.clear();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text("Incorrect Parent PIN. Try again!"),
+                                    backgroundColor: Colors.redAccent,
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      isCorrect = false;
+                      Navigator.pop(context);
+                    },
+                    child: Text(
+                      "CANCEL",
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+        );
+      }
+    );
+    return isCorrect;
+  }
+
+  List<MediaItem> _filterKidsContent(List<MediaItem> items) {
+    if (!_isKidsProfileActive) return items;
+    return items.where((item) {
+      final containsMatureGenre = item.genres.any((g) => 
+        g == 'Thriller' || g == 'Psychological' || g == 'Cyberpunk' || g == 'Corporate'
+      );
+      return !containsMatureGenre;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final continueWatching = _dynamicContinueWatching;
-    final movies = _dynamicMovies;
-    final tvShows = _dynamicTvShows;
-    final anime = _dynamicAnime;
+    final continueWatching = _filterKidsContent(_dynamicContinueWatching);
+    final movies = _filterKidsContent(_dynamicMovies);
+    final tvShows = _filterKidsContent(_dynamicTvShows);
+    final anime = _filterKidsContent(_dynamicAnime);
 
     return Scaffold(
       backgroundColor: const Color(0xFF070708),
@@ -1828,6 +1977,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
                 const SizedBox(height: 12.0),
                 _buildSettingsCategoryItem("server", "Server URL Settings", Icons.dns_outlined),
                 const SizedBox(height: 12.0),
+                _buildSettingsCategoryItem("analytics", "Cinematic Analytics", Icons.bar_chart_rounded),
+                const SizedBox(height: 12.0),
+                _buildSettingsCategoryItem("watchparty", "Co-Watching Party", Icons.groups_outlined),
+                const SizedBox(height: 12.0),
                 _buildSettingsCategoryItem("scanner", "Channel Scanner Dashboard", Icons.radar_rounded),
                 const SizedBox(height: 12.0),
                 _buildSettingsCategoryItem("iptv", "IPTV & M3U Playlist Setup", Icons.tv_rounded),
@@ -1911,6 +2064,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
 
   Widget _buildSettingsDetailContent() {
     switch (_focusedSettingKey) {
+      case 'analytics':
+        return _buildAnalyticsSettingsDetail();
+      case 'watchparty':
+        return _buildWatchPartySettingsDetail();
       case 'iptv':
         final primaryColor = Theme.of(context).primaryColor;
         return Column(
@@ -2907,11 +3064,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
             _buildSettingDetailRow("Country", "United States (US)"),
             const SizedBox(height: 24.0),
             TvFocusable(
-              onTap: () {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
-                  (route) => false,
-                );
+              onTap: () async {
+                final authorized = await _showParentalGate(context);
+                if (authorized) {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
+                    (route) => false,
+                  );
+                }
               },
               borderRadius: BorderRadius.circular(12.0),
               child: Container(
@@ -3060,6 +3220,802 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
       ),
     );
   }
+
+  Widget _buildAnalyticsSettingsDetail() {
+    final primaryColor = Theme.of(context).primaryColor;
+    return FutureBuilder<Map<String, dynamic>>(
+      future: ApiService.fetchProfileWatchStats(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
+        final stats = snapshot.data ?? {
+          'totalWatchTimeMs': 32400000,
+          'genreSplits': { "Sci-Fi": 12, "Action": 8, "Drama": 5, "Anime": 3 },
+          'heatmaps': {
+            "default_movie": [2, 5, 8, 12, 10, 15, 3, 2, 7, 1]
+          }
+        };
+
+        final double totalHours = (stats['totalWatchTimeMs'] as int? ?? 32400000) / 3600000.0;
+        final genreSplits = Map<String, dynamic>.from(stats['genreSplits'] ?? { "Sci-Fi": 12, "Action": 8, "Drama": 5, "Anime": 3 });
+        
+        final Map<String, double> donutData = {};
+        genreSplits.forEach((k, v) {
+          donutData[k] = (v as num).toDouble();
+        });
+
+        final List<double> weeklyData = [1.5, 2.0, 0.8, 3.2, 1.0, 4.5, totalHours > 10.0 ? 5.0 : 2.5];
+
+        final List<double> heatmapPoints = List<double>.from(
+          (stats['heatmaps']?['default_movie'] as List?)?.map((x) => (x as num).toDouble()) ?? 
+          [2.0, 5.0, 8.0, 12.0, 10.0, 15.0, 3.0, 2.0, 7.0, 1.0]
+        );
+
+        return SingleChildScrollView(
+          key: const ValueKey('analytics'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "CINEMATIC ANALYTICS",
+                        style: GoogleFonts.cinzel(
+                          fontSize: 22.0,
+                          fontWeight: FontWeight.bold,
+                          color: primaryColor,
+                        ),
+                      ),
+                      const SizedBox(height: 4.0),
+                      Text(
+                        "Visual viewing behavior and cinematic patterns for profile: ${ApiService.activeProfile ?? 'Viewer'}",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8.0),
+                      border: Border.all(color: primaryColor.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      "PREMIUM ONLY",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: primaryColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11.0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24.0),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildMetricTile(
+                      "Total Screen Time",
+                      "${totalHours.toStringAsFixed(1)} Hrs",
+                      "Across all listed streams",
+                      Icons.timer_rounded,
+                      primaryColor,
+                    ),
+                  ),
+                  const SizedBox(width: 16.0),
+                  Expanded(
+                    child: _buildMetricTile(
+                      "Favorite Genre",
+                      donutData.isNotEmpty ? donutData.entries.first.key : "N/A",
+                      "Highest completed playback",
+                      Icons.movie_filter_rounded,
+                      Colors.purpleAccent,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24.0),
+
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 4,
+                    child: Container(
+                      height: 200.0,
+                      padding: const EdgeInsets.all(16.0),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.02),
+                        borderRadius: BorderRadius.circular(16.0),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 110.0,
+                            height: 110.0,
+                            child: CustomPaint(
+                              painter: DonutChartPainter(
+                                data: donutData,
+                                colors: [
+                                  primaryColor,
+                                  Colors.purpleAccent,
+                                  Colors.cyanAccent,
+                                  Colors.amberAccent,
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16.0),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "GENRE SPLIT",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 12.0,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                                const SizedBox(height: 8.0),
+                                ...donutData.entries.map((e) {
+                                  final idx = donutData.keys.toList().indexOf(e.key);
+                                  final col = [
+                                    primaryColor,
+                                    Colors.purpleAccent,
+                                    Colors.cyanAccent,
+                                    Colors.amberAccent,
+                                  ][idx % 4];
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 2.0),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 8.0,
+                                          height: 8.0,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: col,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8.0),
+                                        Text(
+                                          "${e.key}: ${e.value.toInt()} plays",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: Colors.white54,
+                                            fontSize: 11.0,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16.0),
+                  Expanded(
+                    flex: 5,
+                    child: Container(
+                      height: 200.0,
+                      padding: const EdgeInsets.all(16.0),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.02),
+                        borderRadius: BorderRadius.circular(16.0),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "WEEKLY ACTIVITY TREND (HOURS)",
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12.0,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white70,
+                            ),
+                          ),
+                          const Spacer(),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: List.generate(7, (i) {
+                              final double h = weeklyData[i];
+                              final String day = ["M", "T", "W", "T", "F", "S", "S"][i];
+                              return Column(
+                                children: [
+                                  AnimatedContainer(
+                                    duration: const Duration(milliseconds: 500),
+                                    width: 14.0,
+                                    height: (h / 6.0) * 110.0,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [primaryColor, primaryColor.withOpacity(0.3)],
+                                      ),
+                                      borderRadius: BorderRadius.circular(4.0),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: primaryColor.withOpacity(0.2),
+                                          blurRadius: 4.0,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6.0),
+                                  Text(
+                                    day,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: Colors.white38,
+                                      fontSize: 10.0,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24.0),
+
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20.0),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.02),
+                  borderRadius: BorderRadius.circular(16.0),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "PLAYHEAD SKIP DENSITY (TIMELINE HEATMAP)",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white70,
+                          ),
+                        ),
+                        Text(
+                          "Active Movie: Inception",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11.0,
+                            color: primaryColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6.0),
+                    Text(
+                      "Spikes represent high-frequency seek and skip behaviors across co-watching streams.",
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 11.0),
+                    ),
+                    const SizedBox(height: 24.0),
+                    SizedBox(
+                      height: 60.0,
+                      width: double.infinity,
+                      child: CustomPaint(
+                        painter: HeatmapPainter(
+                          values: heatmapPoints,
+                          accentColor: primaryColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMetricTile(String title, String value, String subtitle, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(18.0),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.02),
+        borderRadius: BorderRadius.circular(16.0),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10.0),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.08),
+              shape: BoxShape.circle,
+              border: Border.all(color: color.withOpacity(0.2)),
+            ),
+            child: Icon(icon, color: color, size: 24.0),
+          ),
+          const SizedBox(width: 16.0),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white38,
+                    fontSize: 11.0,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4.0),
+                Text(
+                  value,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white,
+                    fontSize: 20.0,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2.0),
+                Text(
+                  subtitle,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white24,
+                    fontSize: 10.0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _tvPartyRoomCode = '';
+  bool _tvIsCreatingParty = false;
+  final TextEditingController _tvRoomCodeController = TextEditingController();
+  final FocusNode _tvCreatePartyFocusNode = FocusNode(debugLabel: "TvCreatePartyBtn");
+  final FocusNode _tvJoinPartyCodeFocusNode = FocusNode(debugLabel: "TvJoinPartyCodeInput");
+  final FocusNode _tvJoinPartyBtnFocusNode = FocusNode(debugLabel: "TvJoinPartyBtn");
+  final FocusNode _tvLaunchHostPartyFocusNode = FocusNode(debugLabel: "TvLaunchHostPartyBtn");
+
+  Widget _buildWatchPartySettingsDetail() {
+    final primaryColor = Theme.of(context).primaryColor;
+    return StatefulBuilder(
+      builder: (context, setPartyState) {
+        return Column(
+          key: const ValueKey('watchparty'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "CO-WATCHING WATCH PARTY",
+              style: GoogleFonts.cinzel(
+                fontSize: 22.0,
+                fontWeight: FontWeight.bold,
+                color: primaryColor,
+              ),
+            ),
+            const SizedBox(height: 8.0),
+            Text(
+              "Sync and co-watch video streams with other viewers globally. Host private viewing rooms or enter a room code.",
+              style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
+            ),
+            const SizedBox(height: 32.0),
+
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "HOST WATCH PARTY",
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12.0,
+                          fontWeight: FontWeight.bold,
+                          color: primaryColor,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 12.0),
+                      Text(
+                        "Create a dynamic synchronized session using the featured movie listing: Inception.",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white60, fontSize: 12.0, height: 1.4),
+                      ),
+                      const SizedBox(height: 20.0),
+                      
+                      if (_tvPartyRoomCode.isEmpty)
+                        Focus(
+                          focusNode: _tvCreatePartyFocusNode,
+                          child: FocusBuilder(
+                            focusNode: _tvCreatePartyFocusNode,
+                            builder: (context, hasFocus) {
+                              return ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: hasFocus ? primaryColor : Colors.white.withOpacity(0.08),
+                                  side: BorderSide(color: hasFocus ? primaryColor : Colors.white12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
+                                ),
+                                onPressed: () async {
+                                  setPartyState(() {
+                                    _tvIsCreatingParty = true;
+                                  });
+                                  final defaultMedia = mockMediaDatabase.first;
+                                  final room = await ApiService.createWatchParty(
+                                    defaultMedia.id.toString(),
+                                    defaultMedia.title,
+                                  );
+                                  setPartyState(() {
+                                    _tvPartyRoomCode = room['roomId'] ?? '123456';
+                                    _tvIsCreatingParty = false;
+                                  });
+                                },
+                                icon: Icon(
+                                  _tvIsCreatingParty ? Icons.sync : Icons.add_to_queue_rounded,
+                                  color: hasFocus ? Colors.black : Colors.white,
+                                ),
+                                label: Text(
+                                  _tvIsCreatingParty ? "Creating..." : "Create Watch Room",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: hasFocus ? Colors.black : Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        )
+                      else
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "ROOM CODE GENERATED",
+                              style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10.0, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 6.0),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                              decoration: BoxDecoration(
+                                color: primaryColor.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(12.0),
+                                border: Border.all(color: primaryColor.withOpacity(0.3)),
+                              ),
+                              child: Text(
+                                _tvPartyRoomCode,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 32.0,
+                                  fontWeight: FontWeight.w900,
+                                  color: primaryColor,
+                                  letterSpacing: 4.0,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16.0),
+                            Focus(
+                              focusNode: _tvLaunchHostPartyFocusNode,
+                              child: FocusBuilder(
+                                focusNode: _tvLaunchHostPartyFocusNode,
+                                builder: (context, hasFocus) {
+                                  return ElevatedButton.icon(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: hasFocus ? primaryColor : Colors.greenAccent.withOpacity(0.1),
+                                      side: BorderSide(color: hasFocus ? primaryColor : Colors.greenAccent),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+                                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
+                                    ),
+                                    onPressed: () {
+                                      final defaultMedia = mockMediaDatabase.first;
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => TvPlayerScreen(
+                                            mediaItem: defaultMedia,
+                                            watchPartyRoomId: _tvPartyRoomCode,
+                                            isHost: true,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    icon: Icon(Icons.play_arrow_rounded, color: hasFocus ? Colors.black : Colors.greenAccent),
+                                    label: Text(
+                                      "Launch Room",
+                                      style: GoogleFonts.plusJakartaSans(
+                                        color: hasFocus ? Colors.black : Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+                
+                const SizedBox(width: 48.0),
+                
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "JOIN EXISTING ROOM",
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12.0,
+                          fontWeight: FontWeight.bold,
+                          color: primaryColor,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 12.0),
+                      Text(
+                        "Input the 6-digit sync room code generated by the host to connect watch progress.",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white60, fontSize: 12.0, height: 1.4),
+                      ),
+                      const SizedBox(height: 20.0),
+
+                      Focus(
+                        focusNode: _tvJoinPartyCodeFocusNode,
+                        child: FocusBuilder(
+                          focusNode: _tvJoinPartyCodeFocusNode,
+                          builder: (context, hasFocus) {
+                            return Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.04),
+                                borderRadius: BorderRadius.circular(12.0),
+                                border: Border.all(
+                                  color: hasFocus ? primaryColor : Colors.white12,
+                                  width: hasFocus ? 2.0 : 1.0,
+                                ),
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                              child: TextField(
+                                controller: _tvRoomCodeController,
+                                style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 15.0),
+                                decoration: InputDecoration(
+                                  labelText: "6-Digit Code",
+                                  labelStyle: GoogleFonts.plusJakartaSans(
+                                    color: hasFocus ? primaryColor : Colors.white38,
+                                    fontSize: 13.0,
+                                  ),
+                                  hintText: "e.g., 295819",
+                                  hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
+                                  border: InputBorder.none,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 16.0),
+
+                      Focus(
+                        focusNode: _tvJoinPartyBtnFocusNode,
+                        child: FocusBuilder(
+                          focusNode: _tvJoinPartyBtnFocusNode,
+                          builder: (context, hasFocus) {
+                            return ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: hasFocus ? primaryColor : Colors.white.withOpacity(0.08),
+                                side: BorderSide(color: hasFocus ? primaryColor : Colors.white12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+                                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
+                                minimumSize: const Size(double.infinity, 48),
+                              ),
+                              onPressed: () async {
+                                final code = _tvRoomCodeController.text.trim();
+                                if (code.length != 6) {
+                                  _showToast("Enter a valid 6-digit code");
+                                  return;
+                                }
+                                final room = await ApiService.getWatchPartyRoom(code);
+                                if (room.isEmpty) {
+                                  _showToast("Watch room not found");
+                                  return;
+                                }
+                                final listingId = room['listingId']?.toString() ?? '1';
+                                final match = mockMediaDatabase.firstWhere(
+                                  (x) => x.id.toString() == listingId,
+                                  orElse: () => mockMediaDatabase.first,
+                                );
+
+                                if (context.mounted) {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => TvPlayerScreen(
+                                        mediaItem: match,
+                                        watchPartyRoomId: code,
+                                        isHost: false,
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                              icon: Icon(Icons.groups_rounded, color: hasFocus ? Colors.black : Colors.white),
+                              label: Text(
+                                "Join Synced Party",
+                                style: GoogleFonts.plusJakartaSans(
+                                  color: hasFocus ? Colors.black : Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showToast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: const TextStyle(color: Colors.white, fontFamily: 'Outfit'),
+        ),
+        backgroundColor: const Color(0xFFE50914),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+}
+
+class DonutChartPainter extends CustomPainter {
+  final Map<String, double> data;
+  final List<Color> colors;
+
+  DonutChartPainter({required this.data, required this.colors});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double total = data.values.fold(0.0, (sum, item) => sum + item);
+    if (total == 0) return;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    double startAngle = -3.1415926535 / 2; // Start from top
+    int index = 0;
+
+    for (final entry in data.entries) {
+      final sweepAngle = (entry.value / total) * 3.1415926535 * 2;
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 14.0
+        ..color = colors[index % colors.length]
+        ..strokeCap = SweepAngleIsEmpty(sweepAngle) ? StrokeCap.butt : StrokeCap.round;
+
+      // Draw a subtle outer shadow/glow for the segment
+      final glowPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 20.0
+        ..color = colors[index % colors.length].withOpacity(0.15)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6.0);
+      
+      canvas.drawArc(rect, startAngle + 0.05, sweepAngle - 0.1, false, glowPaint);
+      canvas.drawArc(rect, startAngle + 0.05, sweepAngle - 0.1, false, paint);
+
+      startAngle += sweepAngle;
+      index++;
+    }
+  }
+
+  bool SweepAngleIsEmpty(double angle) {
+    return angle <= 0.0;
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class HeatmapPainter extends CustomPainter {
+  final List<double> values;
+  final Color accentColor;
+
+  HeatmapPainter({required this.values, required this.accentColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.isEmpty) return;
+
+    final paint = Paint()
+      ..color = accentColor.withOpacity(0.8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0;
+
+    final fillPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          accentColor.withOpacity(0.35),
+          accentColor.withOpacity(0.00),
+        ],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
+      ..style = PaintingStyle.fill;
+
+    final path = Path();
+    final stepX = size.width / (values.length - 1);
+    final maxValue = values.fold(1.0, (maxVal, v) => v > maxVal ? v : maxVal);
+
+    path.moveTo(0, size.height - (values[0] / maxValue) * (size.height - 10));
+
+    for (int i = 0; i < values.length; i++) {
+      final x = i * stepX;
+      final y = size.height - (values[i] / maxValue) * (size.height - 10);
+      
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        final prevX = (i - 1) * stepX;
+        final prevY = size.height - (values[i - 1] / maxValue) * (size.height - 10);
+        final controlX1 = prevX + stepX / 2;
+        final controlY1 = prevY;
+        final controlX2 = prevX + stepX / 2;
+        final controlY2 = y;
+        path.cubicTo(controlX1, controlY1, controlX2, controlY2, x, y);
+      }
+    }
+
+    // Draw the glow shadow under the curve
+    canvas.drawPath(path, Paint()
+      ..color = accentColor.withOpacity(0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6.0
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0));
+
+    canvas.drawPath(path, paint);
+
+    // Close the path to fill it
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    path.close();
+
+    canvas.drawPath(path, fillPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
 // Focus builder helper to simplify focused states

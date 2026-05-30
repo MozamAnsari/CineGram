@@ -44,6 +44,7 @@ class ApiService {
     onRequest: (options, handler) {
       if (_activeProfile != null) {
         options.headers['X-Cinegram-Profile'] = _activeProfile;
+        options.headers['x-profile-role'] = _activeProfile;
       }
       return handler.next(options);
     },
@@ -148,6 +149,7 @@ class ApiService {
       developer.log('Unexpected error syncing progress', name: 'ApiService.syncWatchProgress', error: e);
     }
   }
+
 
   /// Fetches the user's synced continue watching list from Supabase
   static Future<List<dynamic>> fetchContinueWatching() async {
@@ -465,5 +467,287 @@ class ApiService {
         return matchesTitle || matchesGenre || matchesSynopsis;
       }).toList();
     }
+  }
+
+  /// Logs profile watch stats, genre selection, and skip timelines on the backend.
+  static Future<Map<String, dynamic>> logWatchStats({int? watchTimeMs, String? genre, String? mediaId, int? timelineCheckpoint}) async {
+    try {
+      final response = await _dio.post('/analytics/stats', data: {
+        if (watchTimeMs != null) 'watchTimeMs': watchTimeMs,
+        if (genre != null) 'genre': genre,
+        if (mediaId != null) 'mediaId': mediaId,
+        if (timelineCheckpoint != null) 'timelineCheckpoint': timelineCheckpoint,
+      });
+      return Map<String, dynamic>.from(response.data['stats'] ?? {});
+    } catch (e) {
+      developer.log('Error logging watch stats', error: e, name: 'ApiService.logWatchStats');
+      return {};
+    }
+  }
+
+  /// Fetches profile watch stats and skip timelines.
+  static Future<Map<String, dynamic>> fetchProfileWatchStats() async {
+    try {
+      final response = await _dio.get('/analytics/stats');
+      return Map<String, dynamic>.from(response.data['stats'] ?? {});
+    } catch (e) {
+      developer.log('Error fetching profile watch stats, using default mock fallback', error: e, name: 'ApiService.fetchProfileWatchStats');
+      return {
+        'totalWatchTimeMs': 32400000,
+        'genreSplits': { "Sci-Fi": 12, "Action": 8, "Drama": 5, "Anime": 3 },
+        'heatmaps': {
+          "default_movie": [2, 5, 8, 12, 10, 15, 3, 2, 7, 1]
+        }
+      };
+    }
+  }
+
+  /// Fetches subtitle tracks for a movie language.
+  static Future<List<dynamic>> fetchSubtitleTracks(String url, String lang) async {
+    try {
+      final response = await _dio.get('/subtitles/proxy', queryParameters: {'url': url, 'lang': lang});
+      return List<dynamic>.from(response.data['subtitleTracks'] ?? []);
+    } catch (e) {
+      developer.log('Error fetching subtitle tracks, using default mock fallback', error: e, name: 'ApiService.fetchSubtitleTracks');
+      return [
+        { 'startTime': 0.5, 'endTime': 3.2, 'text': lang == "es" ? "Cobb: ¿Cuál es la ley del parásito?" : "Cobb: What is the most resilient parasite?" },
+        { 'startTime': 3.5, 'endTime': 6.8, 'text': lang == "es" ? "Una idea. Resistente. Altamente contagiosa." : "An idea. Resilient. Highly contagious." },
+        { 'startTime': 7.2, 'endTime': 10.5, 'text': lang == "es" ? "Una vez que una idea se ha apoderado..." : "Once an idea has taken hold..." },
+        { 'startTime': 11.0, 'endTime': 15.0, 'text': lang == "es" ? "[Música de suspenso in crescendo]" : "[Suspenseful Music Swelling]" }
+      ];
+    }
+  }
+
+  /// Creates a watch party room.
+  static Future<Map<String, dynamic>> createWatchParty(String listingId, String movieTitle) async {
+    try {
+      final response = await _dio.post('/party/room', data: {'listingId': listingId, 'movieTitle': movieTitle});
+      return Map<String, dynamic>.from(response.data['room'] ?? {});
+    } catch (e) {
+      developer.log('Error creating watch party', error: e, name: 'ApiService.createWatchParty');
+      return {
+        'roomId': '123456',
+        'hostProfile': _activeProfile ?? 'default',
+        'listingId': listingId,
+        'movieTitle': movieTitle,
+        'playheadMs': 0,
+        'state': 'paused',
+        'reactions': []
+      };
+    }
+  }
+
+  /// Fetches watch party room sync coordinates.
+  static Future<Map<String, dynamic>> getWatchPartyRoom(String roomId) async {
+    try {
+      final response = await _dio.get('/party/room', queryParameters: {'roomId': roomId});
+      return Map<String, dynamic>.from(response.data['room'] ?? {});
+    } catch (e) {
+      developer.log('Error fetching watch party room', error: e, name: 'ApiService.getWatchPartyRoom');
+      return {};
+    }
+  }
+
+  /// Updates watch party room coordinates and logs reactions.
+  static Future<Map<String, dynamic>> updateWatchPartyRoom(String roomId, {int? playheadMs, String? state, String? reactionEmoji}) async {
+    try {
+      final response = await _dio.put('/party/room', data: {
+        'roomId': roomId,
+        if (playheadMs != null) 'playheadMs': playheadMs,
+        if (state != null) 'state': state,
+        if (reactionEmoji != null) 'reactionEmoji': reactionEmoji,
+      });
+      return Map<String, dynamic>.from(response.data['room'] ?? {});
+    } catch (e) {
+      developer.log('Error updating watch party room', error: e, name: 'ApiService.updateWatchPartyRoom');
+      return {};
+    }
+  }
+
+  // --- Collaborative Playlists Mock Database & Methods ---
+  static final List<Map<String, dynamic>> _mockPlaylists = [];
+
+  /// Creates a new collaborative playlist on the backend
+  static Future<Map<String, dynamic>> createPlaylist(String title) async {
+    try {
+      final response = await _dio.post('/playlists', data: {'title': title});
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return Map<String, dynamic>.from(response.data['playlist'] ?? response.data);
+      }
+    } catch (e) {
+      developer.log('Error creating playlist, using fallback', error: e, name: 'ApiService.createPlaylist');
+    }
+    // Fallback
+    final newPlaylist = {
+      'id': 'playlist_${DateTime.now().millisecondsSinceEpoch}',
+      'title': title,
+      'createdBy': _activeProfile ?? 'default',
+      'items': <dynamic>[],
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+    _mockPlaylists.add(newPlaylist);
+    return newPlaylist;
+  }
+
+  /// Fetches all collaborative playlists from the backend
+  static Future<List<dynamic>> fetchPlaylists() async {
+    try {
+      final response = await _dio.get('/playlists');
+      if (response.statusCode == 200) {
+        final list = response.data['playlists'] ?? response.data;
+        if (list is List) {
+          return List<dynamic>.from(list);
+        }
+      }
+    } catch (e) {
+      developer.log('Error fetching playlists, using fallback', error: e, name: 'ApiService.fetchPlaylists');
+    }
+    return List<dynamic>.from(_mockPlaylists);
+  }
+
+  /// Deletes a collaborative playlist by ID on the backend
+  static Future<bool> deletePlaylist(String playlistId) async {
+    try {
+      final response = await _dio.delete('/playlists/$playlistId');
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        return true;
+      }
+    } catch (e) {
+      developer.log('Error deleting playlist, using fallback', error: e, name: 'ApiService.deletePlaylist');
+    }
+    final initialLength = _mockPlaylists.length;
+    _mockPlaylists.removeWhere((p) => p['id']?.toString() == playlistId);
+    return _mockPlaylists.length < initialLength;
+  }
+
+  /// Adds a media item to a collaborative playlist on the backend
+  static Future<Map<String, dynamic>> addPlaylistItem(String playlistId, String mediaId) async {
+    try {
+      final response = await _dio.post('/playlists/$playlistId/items', data: {'mediaId': mediaId});
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return Map<String, dynamic>.from(response.data['item'] ?? response.data);
+      }
+    } catch (e) {
+      developer.log('Error adding playlist item, using fallback', error: e, name: 'ApiService.addPlaylistItem');
+    }
+    // Fallback
+    final item = {
+      'id': 'item_${DateTime.now().millisecondsSinceEpoch}',
+      'playlistId': playlistId,
+      'mediaId': mediaId,
+      'addedAt': DateTime.now().toIso8601String(),
+    };
+    for (var playlist in _mockPlaylists) {
+      if (playlist['id']?.toString() == playlistId) {
+        final items = List<dynamic>.from(playlist['items'] ?? []);
+        items.add(item);
+        playlist['items'] = items;
+        break;
+      }
+    }
+    return item;
+  }
+
+  /// Fetches all items in a collaborative playlist from the backend
+  static Future<List<dynamic>> fetchPlaylistItems(String playlistId) async {
+    try {
+      final response = await _dio.get('/playlists/$playlistId/items');
+      if (response.statusCode == 200) {
+        final list = response.data['items'] ?? response.data;
+        if (list is List) {
+          return List<dynamic>.from(list);
+        }
+      }
+    } catch (e) {
+      developer.log('Error fetching playlist items, using fallback', error: e, name: 'ApiService.fetchPlaylistItems');
+    }
+    // Fallback
+    for (var playlist in _mockPlaylists) {
+      if (playlist['id']?.toString() == playlistId) {
+        return List<dynamic>.from(playlist['items'] ?? []);
+      }
+    }
+    return [];
+  }
+
+  /// Removes a media item from a collaborative playlist on the backend
+  static Future<bool> removePlaylistItem(String playlistId, String mediaId) async {
+    try {
+      final response = await _dio.delete('/playlists/$playlistId/items/$mediaId');
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        return true;
+      }
+    } catch (e) {
+      developer.log('Error removing playlist item, using fallback', error: e, name: 'ApiService.removePlaylistItem');
+    }
+    // Fallback
+    bool removed = false;
+    for (var playlist in _mockPlaylists) {
+      if (playlist['id']?.toString() == playlistId) {
+        final items = List<dynamic>.from(playlist['items'] ?? []);
+        final initialLength = items.length;
+        items.removeWhere((item) => item['mediaId']?.toString() == mediaId || item['id']?.toString() == mediaId);
+        playlist['items'] = items;
+        removed = items.length < initialLength;
+        break;
+      }
+    }
+    return removed;
+  }
+
+  // --- Shareable Video Highlights Mock Database & Methods ---
+  static final Map<String, Map<String, dynamic>> _mockHighlights = {};
+
+  /// Creates a shareable video highlight on the backend
+  static Future<Map<String, dynamic>> createHighlight({
+    required String mediaId,
+    required int startTime,
+    required int endTime,
+    String? commentary,
+  }) async {
+    final payload = {
+      'mediaId': mediaId,
+      'startTime': startTime,
+      'endTime': endTime,
+      if (commentary != null) 'commentary': commentary,
+    };
+    try {
+      final response = await _dio.post('/highlights', data: payload);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return Map<String, dynamic>.from(response.data['highlight'] ?? response.data);
+      }
+    } catch (e) {
+      developer.log('Error creating highlight, using fallback', error: e, name: 'ApiService.createHighlight');
+    }
+    // Fallback
+    final code = 'hl_${DateTime.now().millisecondsSinceEpoch.toRadixString(36)}';
+    final highlight = {
+      'id': 'highlight_${DateTime.now().millisecondsSinceEpoch}',
+      'code': code,
+      'mediaId': mediaId,
+      'startTime': startTime,
+      'endTime': endTime,
+      if (commentary != null) 'commentary': commentary,
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+    _mockHighlights[code] = highlight;
+    return highlight;
+  }
+
+  /// Fetches a shareable video highlight by its unique code from the backend
+  static Future<Map<String, dynamic>> fetchHighlightByCode(String code) async {
+    try {
+      final response = await _dio.get('/highlights/$code');
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(response.data['highlight'] ?? response.data);
+      }
+    } catch (e) {
+      developer.log('Error fetching highlight by code: $code, using fallback', error: e, name: 'ApiService.fetchHighlightByCode');
+    }
+    // Fallback
+    if (_mockHighlights.containsKey(code)) {
+      return Map<String, dynamic>.from(_mockHighlights[code]!);
+    }
+    return {};
   }
 }

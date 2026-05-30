@@ -37,6 +37,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _showControls = true;
   Timer? _controlsTimer;
 
+  // Smart Skip & Autoplay states
+  bool _showSkipIntro = false;
+  bool _showNextEpisodeCountdown = false;
+  int _nextEpisodeCountdownSeconds = 5;
+  Timer? _autoplayTimer;
+  bool _didTriggerAutoplay = false;
+
   // Custom gestures volume and brightness states
   double _volume = 0.6;
   double _brightness = 0.8;
@@ -73,6 +80,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   // Sync Watch Progress Timer
   Timer? _progressSyncTimer;
+
+  // Highlight/Scissors state variables
+  bool _showHighlightDialog = false;
+  String _highlightShareCode = '';
+  bool _isCreatingHighlight = false;
 
   @override
   void initState() {
@@ -134,7 +146,100 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _videoListener() {
     if (mounted) {
+      _checkSmartSkip();
       setState(() {});
+    }
+  }
+
+  void _checkSmartSkip() {
+    if (!_controller.value.isInitialized) return;
+    final pos = _controller.value.position;
+    final dur = _controller.value.duration;
+
+    // 1. Skip Intro Window (5s to 90s)
+    if (pos.inSeconds >= 5 && pos.inSeconds <= 90) {
+      if (!_showSkipIntro) {
+        setState(() {
+          _showSkipIntro = true;
+        });
+      }
+    } else {
+      if (_showSkipIntro) {
+        setState(() {
+          _showSkipIntro = false;
+        });
+      }
+    }
+
+    // 2. Outro Autoplay Window (last 30s)
+    if (dur.inSeconds > 90 && dur.inSeconds - pos.inSeconds <= 30) {
+      if (!_showNextEpisodeCountdown && !_didTriggerAutoplay) {
+        _startAutoplayCountdown();
+      }
+    } else {
+      if (pos.inSeconds < dur.inSeconds - 45) {
+        // Reset if sought backwards
+        if (_didTriggerAutoplay || _showNextEpisodeCountdown) {
+          setState(() {
+            _didTriggerAutoplay = false;
+            _showNextEpisodeCountdown = false;
+            _autoplayTimer?.cancel();
+          });
+        }
+      }
+    }
+  }
+
+  void _startAutoplayCountdown() {
+    setState(() {
+      _showNextEpisodeCountdown = true;
+      _nextEpisodeCountdownSeconds = 5;
+    });
+
+    _autoplayTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          if (_nextEpisodeCountdownSeconds > 1) {
+            _nextEpisodeCountdownSeconds--;
+          } else {
+            _autoplayTimer?.cancel();
+            _triggerAutoplay();
+          }
+        });
+      } else {
+        _autoplayTimer?.cancel();
+      }
+    });
+  }
+
+  void _triggerAutoplay() {
+    if (_didTriggerAutoplay) return;
+    _didTriggerAutoplay = true;
+    _autoplayTimer?.cancel();
+
+    // Find next episode dynamically from mock showcase database
+    final list = Media.mockShowcaseList;
+    final nextIndex = list.indexWhere((x) => x.id == widget.media.id) + 1;
+    if (nextIndex < list.length) {
+      final nextItem = list[nextIndex];
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (context) => PlayerScreen(
+            media: nextItem,
+            channelId: widget.channelId,
+            messageId: widget.messageId,
+            streamUrl: widget.streamUrl,
+          ),
+        ),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Autoplay: Launching next episode: ${nextItem.title}"),
+          backgroundColor: Theme.of(context).primaryColor,
+        ),
+      );
+    } else {
+      Navigator.pop(context);
     }
   }
 
@@ -149,6 +254,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _skipLeftTimer?.cancel();
     _skipRightTimer?.cancel();
     _toastTimer?.cancel();
+    _autoplayTimer?.cancel();
 
     _controller.removeListener(_videoListener);
     _controller.dispose();
@@ -173,6 +279,237 @@ class _PlayerScreenState extends State<PlayerScreen> {
         duration: _controller.value.duration,
       );
     }
+  }
+
+  void _createHighlightClip() async {
+    _resetControlsTimer();
+    if (!_controller.value.isInitialized) return;
+
+    setState(() {
+      _isCreatingHighlight = true;
+      _showHighlightDialog = true;
+      _highlightShareCode = '';
+    });
+
+    final end = _controller.value.position;
+    Duration start = end - const Duration(seconds: 15);
+    if (start.isNegative) {
+      start = Duration.zero;
+    }
+
+    try {
+      final result = await ApiService.createHighlight(
+        mediaId: widget.media.id.toString(),
+        startTime: start.inMilliseconds,
+        endTime: end.inMilliseconds,
+      );
+
+      if (mounted) {
+        setState(() {
+          _highlightShareCode = result['code'] ?? 'CINE99';
+          _isCreatingHighlight = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _highlightShareCode = 'ERR500';
+          _isCreatingHighlight = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildHighlightOverlay() {
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          // Semi-transparent dim background
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _showHighlightDialog = false;
+              });
+            },
+            child: Container(
+              color: Colors.black.withOpacity(0.6),
+            ),
+          ),
+          Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: Container(
+                  width: 380,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F0F12).withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: const Color(0xFFD4AF37).withOpacity(0.3),
+                      width: 1.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFD4AF37).withOpacity(0.15),
+                        blurRadius: 25,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Header with Amber Scissors
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD4AF37).withOpacity(0.15),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.content_cut_rounded,
+                              color: Color(0xFFD4AF37),
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            "Highlight Captured",
+                            style: GoogleFonts.outfit(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        "A 15-second clip has been registered (from ${_formatDuration(_controller.value.position - const Duration(seconds: 15) < Duration.zero ? Duration.zero : _controller.value.position - const Duration(seconds: 15))} to ${_formatDuration(_controller.value.position)}). Share it using the code below:",
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.dmSans(
+                          color: Colors.white.withOpacity(0.65),
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      
+                      // 6-digit Code Box / Spinner
+                      _isCreatingHighlight
+                          ? const Column(
+                              children: [
+                                SpinKitFadingCircle(
+                                  color: Color(0xFFD4AF37),
+                                  size: 40.0,
+                                ),
+                                SizedBox(height: 12),
+                                Text(
+                                  "Generating Code...",
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.04),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: const Color(0xFFD4AF37).withOpacity(0.15),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                _highlightShareCode,
+                                style: GoogleFonts.outfit(
+                                  color: const Color(0xFFD4AF37),
+                                  fontSize: 36,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 8,
+                                ),
+                              ),
+                            ),
+                      
+                      const SizedBox(height: 24),
+                      
+                      // Mock "Copy Code" & "Dismiss" buttons
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(color: Colors.white.withOpacity(0.2)),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _showHighlightDialog = false;
+                                });
+                              },
+                              child: Text(
+                                "Dismiss",
+                                style: GoogleFonts.dmSans(
+                                  color: Colors.white70,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFD4AF37),
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 4,
+                                shadowColor: const Color(0xFFD4AF37).withOpacity(0.3),
+                              ),
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: _highlightShareCode));
+                                _showToast("Code copied to clipboard: $_highlightShareCode");
+                                setState(() {
+                                  _showHighlightDialog = false;
+                                });
+                              },
+                              icon: const Icon(Icons.copy_rounded, size: 16),
+                              label: Text(
+                                "Copy Code",
+                                style: GoogleFonts.dmSans(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _startControlsTimer() {
@@ -441,6 +778,141 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
 
+            // ⏩ SMART SKIP INTRO OVERLAY
+            if (_showSkipIntro)
+              Positioned(
+                bottom: _showControls ? 140.0 : 64.0,
+                right: 32.0,
+                child: GestureDetector(
+                  onTap: () {
+                    _controller.seekTo(const Duration(seconds: 90));
+                    setState(() {
+                      _showSkipIntro = false;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.75),
+                      borderRadius: BorderRadius.circular(30.0),
+                      border: Border.all(
+                        color: Theme.of(context).primaryColor,
+                        width: 2.0,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Theme.of(context).primaryColor.withOpacity(0.3),
+                          blurRadius: 12.0,
+                          spreadRadius: 1.0,
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.fast_forward_rounded,
+                          color: Colors.white,
+                          size: 18.0,
+                        ),
+                        const SizedBox(width: 8.0),
+                        Text(
+                          "SKIP INTRO",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12.0,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            // 🧸 SMART NEXT EPISODE COUNTDOWN OVERLAY
+            if (_showNextEpisodeCountdown)
+              Positioned(
+                bottom: _showControls ? 140.0 : 64.0,
+                right: 32.0,
+                child: GestureDetector(
+                  onTap: _triggerAutoplay,
+                  child: Container(
+                    width: 220.0,
+                    padding: const EdgeInsets.all(12.0),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F0F12).withOpacity(0.95),
+                      borderRadius: BorderRadius.circular(16.0),
+                      border: Border.all(
+                        color: Theme.of(context).primaryColor.withOpacity(0.5),
+                        width: 1.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.5),
+                          blurRadius: 16.0,
+                          spreadRadius: 1.0,
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.queue_play_next_rounded, color: Colors.orangeAccent, size: 18.0),
+                            const SizedBox(width: 6.0),
+                            Text(
+                              "NEXT IN $_nextEpisodeCountdownSeconds...",
+                              style: GoogleFonts.plusJakartaSans(
+                                color: Colors.orangeAccent,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 10.0,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6.0),
+                        Text(
+                          "Subsequent Episode",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13.0,
+                          ),
+                        ),
+                        const SizedBox(height: 10.0),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 32.0,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).primaryColor,
+                              borderRadius: BorderRadius.circular(8.0),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              "PLAY NOW",
+                              style: GoogleFonts.plusJakartaSans(
+                                color: Colors.black,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 10.5,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
             // Immersive Video Controls
             AnimatedOpacity(
               opacity: _showControls ? 1.0 : 0.0,
@@ -544,6 +1016,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 },
                 onClose: () => setState(() => _showSpeedSheet = false),
               ),
+
+            if (_showHighlightDialog)
+              _buildHighlightOverlay(),
           ],
         ),
       ),
@@ -1110,6 +1585,32 @@ class _PlayerScreenState extends State<PlayerScreen> {
               // Speed selector & Full screen mock
               Row(
                 children: [
+                  // Glowing Highlight Scissors Button
+                  Container(
+                    margin: const EdgeInsets.only(right: 14),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFD4AF37).withOpacity(0.35),
+                          blurRadius: 8,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: CircleAvatar(
+                      radius: 16,
+                      backgroundColor: Colors.black.withOpacity(0.6),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: const Icon(Icons.content_cut_rounded, color: Color(0xFFD4AF37), size: 16),
+                        onPressed: _createHighlightClip,
+                        tooltip: "Capture Highlight",
+                      ),
+                    ),
+                  ),
+
                   // Playback Speed button
                   TextButton.icon(
                     style: TextButton.styleFrom(

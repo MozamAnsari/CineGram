@@ -31,6 +31,8 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
     'Viewer': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150',
   };
 
+  final Map<String, String> _profilePins = {};
+
   String? _selectedProfileForPin;
   String _enteredPin = '';
   bool _pinError = false;
@@ -76,6 +78,13 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
           if (savedAvatar != null && savedAvatar.isNotEmpty) {
             _profileAvatars[role] = savedAvatar;
           }
+          
+          // Load profile PIN
+          final hasPin = prefs.getBool('profile_has_pin_$role') ?? (role == 'Director');
+          final savedPin = prefs.getString('profile_pin_$role');
+          if (hasPin) {
+            _profilePins[role] = (savedPin != null && savedPin.isNotEmpty) ? savedPin : '1234';
+          }
         }
       });
     } catch (_) {}
@@ -93,7 +102,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
   }
 
   void _onProfileSelected(String role) {
-    if (role == 'Director') {
+    if (_profilePins.containsKey(role)) {
       setState(() {
         _selectedProfileForPin = role;
         _enteredPin = '';
@@ -142,8 +151,9 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
   }
 
   void _validatePin() {
-    if (_enteredPin == '1234') {
-      // Unlocked successfully as Director
+    final expectedPin = _profilePins[_selectedProfileForPin!];
+    if (_enteredPin == expectedPin) {
+      // Unlocked successfully
       final targetProfile = _selectedProfileForPin!;
       setState(() {
         _selectedProfileForPin = null;

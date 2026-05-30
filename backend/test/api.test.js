@@ -1158,5 +1158,272 @@ http://cinema.example.com/stream.m3u8
       expect(response.status).toBe(400);
     });
   });
+
+  // ==========================================
+  // 12. PHASE 15 ENDPOINTS (STATS, SUBTITLES & WATCH PARTIES)
+  // ==========================================
+  describe("Phase 15 Premium Features (Stats, Subtitles, and Watch Parties)", () => {
+    describe("Profile Watch Analytics & Heatmaps", () => {
+      it("should log profile watch stats successfully", async () => {
+        const statsData = {
+          watchTimeMs: 5000,
+          genre: "Sci-Fi",
+          mediaId: "movie-123",
+          timelineCheckpoint: 3
+        };
+        const res = await request(app)
+          .post("/analytics/stats")
+          .set("x-cinegram-profile", "Director")
+          .send(statsData);
+          
+        expect(res.status).toBe(200);
+        expect(res.body.message).toBe("Analytics logged successfully!");
+        expect(res.body.stats.totalWatchTimeMs).toBe(5000);
+        expect(res.body.stats.genreSplits["Sci-Fi"]).toBe(1);
+        expect(res.body.stats.heatmaps["movie-123"][3]).toBe(1);
+      });
+
+      it("should retrieve profile watch stats successfully", async () => {
+        const res = await request(app)
+          .get("/analytics/stats")
+          .set("x-cinegram-profile", "Director");
+          
+        expect(res.status).toBe(200);
+        expect(res.body.stats.totalWatchTimeMs).toBe(5000);
+        expect(res.body.stats.genreSplits["Sci-Fi"]).toBe(1);
+      });
+    });
+
+    describe("Subtitle Translation Proxy", () => {
+      it("should proxy and retrieve subtitle tracks", async () => {
+        const res = await request(app)
+          .get("/subtitles/proxy?url=http://example.com/subs.srt&lang=es");
+          
+        expect(res.status).toBe(200);
+        expect(res.body.subtitleTracks).toBeInstanceOf(Array);
+        expect(res.body.subtitleTracks[0]).toHaveProperty("text");
+        expect(res.body.subtitleTracks[0].text).toContain("Cobb");
+      });
+    });
+
+    describe("Synced Watch Parties & Reactions", () => {
+      let roomId;
+      it("should create a watch party room", async () => {
+        const res = await request(app)
+          .post("/party/room")
+          .send({ listingId: "inception_id", movieTitle: "Inception" });
+          
+        expect(res.status).toBe(201);
+        expect(res.body.room).toHaveProperty("roomId");
+        expect(res.body.room.movieTitle).toBe("Inception");
+        roomId = res.body.room.roomId;
+      });
+
+      it("should retrieve watch party room details", async () => {
+        const res = await request(app).get(`/party/room?roomId=${roomId}`);
+        expect(res.status).toBe(200);
+        expect(res.body.room.roomId).toBe(roomId);
+      });
+
+      it("should update watch party room coordinates and log reactions", async () => {
+        const updateData = {
+          roomId,
+          playheadMs: 15000,
+          state: "playing",
+          reactionEmoji: "🔥"
+        };
+        const res = await request(app).put("/party/room").send(updateData);
+        expect(res.status).toBe(200);
+        expect(res.body.room.playheadMs).toBe(15000);
+        expect(res.body.room.state).toBe("playing");
+        expect(res.body.room.reactions[0].emoji).toBe("🔥");
+      });
+    });
+  });
+
+  // ==========================================
+  // 13. SECURITY MIDDLEWARE (HELMET & RATE-LIMITING) TESTS
+  // ==========================================
+  describe("Security Middleware - Helmet & Rate Limiting", () => {
+    it("should include secure HTTP headers configured by Helmet", async () => {
+      const response = await request(app).get("/health");
+      expect(response.headers).toHaveProperty("x-dns-prefetch-control");
+      expect(response.headers).toHaveProperty("x-frame-options");
+      expect(response.headers).toHaveProperty("x-content-type-options");
+    });
+
+    it("should return rate-limiting headers on API requests", async () => {
+      const response = await request(app).get("/health");
+      expect(response.headers).toHaveProperty("ratelimit-limit");
+      expect(response.headers).toHaveProperty("ratelimit-remaining");
+    });
+
+    it("should block requests exceeding the rate limit with a 429 status code", async () => {
+      const res1 = await request(app).get("/test-rate-limit-endpoint");
+      expect(res1.status).toBe(200);
+
+      const res2 = await request(app).get("/test-rate-limit-endpoint");
+      expect(res2.status).toBe(200);
+
+      const res3 = await request(app).get("/test-rate-limit-endpoint");
+      expect(res3.status).toBe(429);
+    });
+  });
+
+  // ==========================================
+  // 14. COLLABORATIVE PLAYLISTS ENDPOINT TESTS
+  // ==========================================
+  describe("Collaborative Playlists API Flow", () => {
+    let playlistIdA;
+    let playlistIdCollab;
+    let itemId;
+
+    it("should create private and collaborative playlists", async () => {
+      const errRes = await request(app)
+        .post("/playlists")
+        .set("x-cinegram-profile", "profile-a")
+        .send({ description: "No name" });
+      expect(errRes.status).toBe(400);
+
+      const resA = await request(app)
+        .post("/playlists")
+        .set("x-cinegram-profile", "profile-a")
+        .send({ name: "My Sci-Fi Favorites", description: "Private collection", isCollaborative: false });
+      expect(resA.status).toBe(201);
+      expect(resA.body).toHaveProperty("id");
+      expect(resA.body.name).toBe("My Sci-Fi Favorites");
+      expect(resA.body.isCollaborative).toBe(false);
+      playlistIdA = resA.body.id;
+
+      const resCollab = await request(app)
+        .post("/playlists")
+        .set("x-cinegram-profile", "profile-a")
+        .send({ name: "Family Watchlist", description: "Shared watchlist", isCollaborative: true });
+      expect(resCollab.status).toBe(201);
+      playlistIdCollab = resCollab.body.id;
+    });
+
+    it("should get playlists partitioned cleanly by active profile access rights", async () => {
+      const listA = await request(app)
+        .get("/playlists")
+        .set("x-cinegram-profile", "profile-a");
+      expect(listA.status).toBe(200);
+      expect(listA.body.playlists.some(p => p.id === playlistIdA)).toBe(true);
+      expect(listA.body.playlists.some(p => p.id === playlistIdCollab)).toBe(true);
+
+      const listB = await request(app)
+        .get("/playlists")
+        .set("x-cinegram-profile", "profile-b");
+      expect(listB.status).toBe(200);
+      expect(listB.body.playlists.some(p => p.id === playlistIdA)).toBe(false);
+      expect(listB.body.playlists.some(p => p.id === playlistIdCollab)).toBe(true);
+    });
+
+    it("should prevent unauthorized profiles from adding items, but allow collaborative additions", async () => {
+      const errRes = await request(app)
+        .post(`/playlists/${playlistIdA}/items`)
+        .set("x-cinegram-profile", "profile-b")
+        .send({ mediaId: "123", title: "Inception" });
+      expect(errRes.status).toBe(403);
+
+      const successRes = await request(app)
+        .post(`/playlists/${playlistIdCollab}/items`)
+        .set("x-cinegram-profile", "profile-b")
+        .send({ mediaId: "123", title: "Inception", type: "movie", posterUrl: "/inception.jpg" });
+      expect(successRes.status).toBe(201);
+      expect(successRes.body.item).toHaveProperty("itemId");
+      expect(successRes.body.item.mediaId).toBe("123");
+      itemId = successRes.body.item.itemId;
+    });
+
+    it("should retrieve all media items in a playlist for authorized profiles", async () => {
+      const resCollab = await request(app)
+        .get(`/playlists/${playlistIdCollab}/items`)
+        .set("x-cinegram-profile", "profile-b");
+      expect(resCollab.status).toBe(200);
+      expect(resCollab.body.items).toHaveLength(1);
+      expect(resCollab.body.items[0].mediaId).toBe("123");
+
+      const errRes = await request(app)
+        .get(`/playlists/${playlistIdA}/items`)
+        .set("x-cinegram-profile", "profile-b");
+      expect(errRes.status).toBe(403);
+    });
+
+    it("should allow removing items from a collaborative playlist", async () => {
+      const errRes = await request(app)
+        .delete(`/playlists/${playlistIdA}/items/nonexistent-item-id`)
+        .set("x-cinegram-profile", "profile-b");
+      expect(errRes.status).toBe(403);
+
+      const successRes = await request(app)
+        .delete(`/playlists/${playlistIdCollab}/items/${itemId}`)
+        .set("x-cinegram-profile", "profile-b");
+      expect(successRes.status).toBe(200);
+
+      const checkRes = await request(app)
+        .get(`/playlists/${playlistIdCollab}/items`)
+        .set("x-cinegram-profile", "profile-b");
+      expect(checkRes.body.items).toHaveLength(0);
+    });
+
+    it("should enforce playlist deletion authorization limits", async () => {
+      const errRes = await request(app)
+        .delete(`/playlists/${playlistIdA}`)
+        .set("x-cinegram-profile", "profile-b");
+      expect(errRes.status).toBe(403);
+
+      const successRes = await request(app)
+        .delete(`/playlists/${playlistIdA}`)
+        .set("x-cinegram-profile", "profile-a");
+      expect(successRes.status).toBe(200);
+
+      const getRes = await request(app)
+        .get(`/playlists/${playlistIdA}/items`)
+        .set("x-cinegram-profile", "profile-a");
+      expect(getRes.status).toBe(404);
+    });
+  });
+
+  // ==========================================
+  // 15. VIDEO HIGHLIGHTS ENDPOINT TESTS
+  // ==========================================
+  describe("Video Highlights API Flow", () => {
+    let shareCode;
+
+    it("should save video highlights and generate a unique 6-digit share code", async () => {
+      const errRes = await request(app)
+        .post("/highlights")
+        .send({ startTime: 10, endTime: 25 });
+      expect(errRes.status).toBe(400);
+
+      const successRes = await request(app)
+        .post("/highlights")
+        .send({
+          mediaId: "inception-movie-id",
+          startTime: 124.5,
+          endTime: 156.8,
+          commentary: "Mind bending dream collapse sequence!"
+        });
+      expect(successRes.status).toBe(201);
+      expect(successRes.body).toHaveProperty("code");
+      expect(successRes.body.code).toMatch(/^\d{6}$/);
+      shareCode = successRes.body.code;
+    });
+
+    it("should retrieve video highlights using a valid share code", async () => {
+      const res = await request(app).get(`/highlights/${shareCode}`);
+      expect(res.status).toBe(200);
+      expect(res.body.mediaId).toBe("inception-movie-id");
+      expect(res.body.startTime).toBe(124.5);
+      expect(res.body.endTime).toBe(156.8);
+      expect(res.body.commentary).toBe("Mind bending dream collapse sequence!");
+    });
+
+    it("should return 404 for an invalid/nonexistent share code", async () => {
+      const res = await request(app).get("/highlights/999999");
+      expect(res.status).toBe(404);
+    });
+  });
 });
 

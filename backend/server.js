@@ -1,12 +1,17 @@
 require("dotenv").config({ path: "../.env" });
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const { createClient } = require("@supabase/supabase-js");
 const { handleStream } = require("./streamManager");
 const { scannerState, runScan, getDynamicChannels, setDynamicChannels } = require("./scannerService");
 const { parseM3U } = require("./m3uParser");
+const swaggerUi = require("swagger-ui-express");
+const swaggerJsdoc = require("swagger-jsdoc");
 
 // Pre-bundled free-to-air streams
 const DEFAULT_FREE_TO_AIR_STREAMS = [
@@ -33,12 +38,58 @@ const DEFAULT_FREE_TO_AIR_STREAMS = [
 // Local cache for IPTV streams (initialized with pre-bundled default streams)
 let iptvStreams = [...DEFAULT_FREE_TO_AIR_STREAMS];
 
+// Local cache for collaborative playlists & highlights
+let playlists = [];
+let highlights = {};
+
+const generateId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+app.use(helmet());
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiter);
+
+// Swagger definition configuration
+const swaggerOptions = {
+  definition: {
+    openapi: "3.0.0",
+    info: {
+      title: "Cinegram OTT Gateway API",
+      version: "1.0.0",
+      description: "Interactive API Portal for Cinegram streaming gateway, auto-scanning pipeline, watch parties, subtitle hubs, analytics, and social collaborative playlists.",
+    },
+    servers: [
+      {
+        url: "http://localhost:3000",
+        description: "Local Development Server",
+      },
+    ],
+  },
+  apis: ["./server.js"],
+};
+
+const swaggerDocs = swaggerJsdoc(swaggerOptions);
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+
+// Test route for rate limiting
+app.get("/test-rate-limit-endpoint", rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 2,
+  standardHeaders: true,
+  legacyHeaders: false
+}), (req, res) => {
+  res.json({ message: "Rate limit test ok" });
+});
 
 // Middleware to parse custom sub-profile header
 app.use((req, res, next) => {
@@ -490,6 +541,131 @@ app.get("/listings/search", async (req, res) => {
     console.error("[Semantic Search] Execution error:", err);
     res.status(500).json({ error: "Failed to perform semantic search." });
   }
+});
+
+// ----------------------------------------------------
+// PHASE 15 ENDPOINTS (STATS, SUBTITLES & WATCH PARTIES)
+// ----------------------------------------------------
+
+let profileWatchStats = {};
+let activeWatchParties = {};
+
+// 1. Profile Watch Analytics Stats & Heatmaps
+app.post("/analytics/stats", async (req, res) => {
+  const profile = req.profile || "default";
+  const { watchTimeMs, genre, mediaId, timelineCheckpoint } = req.body;
+  
+  if (!profileWatchStats[profile]) {
+    profileWatchStats[profile] = {
+      totalWatchTimeMs: 0,
+      genreSplits: {},
+      heatmaps: {}
+    };
+  }
+  
+  const stats = profileWatchStats[profile];
+  
+  if (watchTimeMs) {
+    stats.totalWatchTimeMs += parseInt(watchTimeMs, 10);
+  }
+  
+  if (genre) {
+    stats.genreSplits[genre] = (stats.genreSplits[genre] || 0) + 1;
+  }
+  
+  if (mediaId && timelineCheckpoint !== undefined) {
+    if (!stats.heatmaps[mediaId]) {
+      stats.heatmaps[mediaId] = Array(10).fill(0);
+    }
+    const idx = Math.min(Math.max(parseInt(timelineCheckpoint, 10), 0), 9);
+    stats.heatmaps[mediaId][idx] += 1;
+  }
+  
+  res.json({ message: "Analytics logged successfully!", stats });
+});
+
+app.get("/analytics/stats", async (req, res) => {
+  const profile = req.profile || "default";
+  
+  const defaultStats = {
+    totalWatchTimeMs: 32400000,
+    genreSplits: { "Sci-Fi": 12, "Action": 8, "Drama": 5, "Anime": 3 },
+    heatmaps: {
+      "default_movie": [2, 5, 8, 12, 10, 15, 3, 2, 7, 1]
+    }
+  };
+  
+  const stats = profileWatchStats[profile] || defaultStats;
+  res.json({ stats });
+});
+
+// 2. Custom Subtitles Proxy & Translation
+app.get("/subtitles/proxy", async (req, res) => {
+  const { url, lang } = req.query;
+  
+  const mockCaptions = [
+    { startTime: 0.5, endTime: 3.2, text: lang === "es" ? "Cobb: ¿Cuál es la ley del parásito?" : "Cobb: What is the most resilient parasite?" },
+    { startTime: 3.5, endTime: 6.8, text: lang === "es" ? "Una idea. Resistente. Altamente contagiosa." : "An idea. Resilient. Highly contagious." },
+    { startTime: 7.2, endTime: 10.5, text: lang === "es" ? "Una vez que una idea se ha apoderado..." : "Once an idea has taken hold..." },
+    { startTime: 11.0, endTime: 15.0, text: lang === "es" ? "[Música de suspenso in crescendo]" : "[Suspenseful Music Swelling]" }
+  ];
+  
+  res.json({ subtitleTracks: mockCaptions });
+});
+
+// 3. Synced Watch Party Room State & Reactions
+app.post("/party/room", async (req, res) => {
+  const profile = req.profile || "default";
+  const { listingId, movieTitle } = req.body;
+  
+  const roomId = Math.floor(100000 + Math.random() * 900000).toString();
+  
+  activeWatchParties[roomId] = {
+    roomId,
+    hostProfile: profile,
+    listingId: listingId || "mock_inception",
+    movieTitle: movieTitle || "Inception",
+    playheadMs: 0,
+    state: "paused",
+    lastUpdate: new Date().toISOString(),
+    reactions: []
+  };
+  
+  res.status(201).json({ message: "Watch Party Room created successfully!", room: activeWatchParties[roomId] });
+});
+
+app.get("/party/room", async (req, res) => {
+  const { roomId } = req.query;
+  
+  if (!roomId || !activeWatchParties[roomId]) {
+    return res.status(404).json({ error: "Watch Party Room not found." });
+  }
+  
+  res.json({ room: activeWatchParties[roomId] });
+});
+
+app.put("/party/room", async (req, res) => {
+  const { roomId, playheadMs, state, reactionEmoji } = req.body;
+  
+  if (!roomId || !activeWatchParties[roomId]) {
+    return res.status(404).json({ error: "Watch Party Room not found." });
+  }
+  
+  const room = activeWatchParties[roomId];
+  
+  if (playheadMs !== undefined) room.playheadMs = parseInt(playheadMs, 10);
+  if (state !== undefined) room.state = state;
+  if (reactionEmoji !== undefined) {
+    room.reactions.push({
+      emoji: reactionEmoji,
+      timestamp: new Date().toISOString()
+    });
+    if (room.reactions.length > 50) room.reactions.shift();
+  }
+  
+  room.lastUpdate = new Date().toISOString();
+  
+  res.json({ message: "Room sync coordinates updated!", room });
 });
 
 // 2. Fetch all Telegram Media Listings
@@ -997,6 +1173,185 @@ app.post("/listings/resolve", async (req, res) => {
     console.error("[Scanner Resolve] Error resolving listing:", err);
     res.status(500).json({ error: "Failed to override unresolved listing." });
   }
+});
+
+// ----------------------------------------------------
+// COLLABORATIVE PLAYLISTS & HIGHLIGHTS ENDPOINTS
+// ----------------------------------------------------
+
+// 1. Create a collaborative playlist
+app.post("/playlists", async (req, res) => {
+  const { name, description, isCollaborative } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: "Playlist name is required." });
+  }
+  try {
+    const userId = await getUserId(req);
+    const newPlaylist = {
+      id: generateId(),
+      name,
+      description: description || "",
+      isCollaborative: !!isCollaborative,
+      ownerId: userId,
+      items: [],
+      createdAt: new Date().toISOString()
+    };
+    playlists.push(newPlaylist);
+    res.status(201).json(newPlaylist);
+  } catch (error) {
+    console.error("Error creating playlist:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// 2. Get playlists the active profile has access to
+app.get("/playlists", async (req, res) => {
+  try {
+    const userId = await getUserId(req);
+    const filtered = playlists.filter(p => p.ownerId === userId || p.isCollaborative === true);
+    res.json({ playlists: filtered });
+  } catch (error) {
+    console.error("Error fetching playlists:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// 3. Delete a playlist
+app.delete("/playlists/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const userId = await getUserId(req);
+    const idx = playlists.findIndex(p => p.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Playlist not found." });
+    }
+    const playlist = playlists[idx];
+    if (playlist.ownerId !== userId) {
+      return res.status(403).json({ error: "You are not authorized to delete this playlist." });
+    }
+    playlists.splice(idx, 1);
+    res.json({ message: "Playlist deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting playlist:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// 4. Add a media item to a playlist
+app.post("/playlists/:id/items", async (req, res) => {
+  const { id } = req.params;
+  const { mediaId, title, type, posterUrl } = req.body;
+  if (!mediaId) {
+    return res.status(400).json({ error: "mediaId is required." });
+  }
+  try {
+    const userId = await getUserId(req);
+    const playlist = playlists.find(p => p.id === id);
+    if (!playlist) {
+      return res.status(404).json({ error: "Playlist not found." });
+    }
+    if (playlist.ownerId !== userId && !playlist.isCollaborative) {
+      return res.status(403).json({ error: "You do not have access to this playlist." });
+    }
+    const newItem = {
+      itemId: generateId(),
+      mediaId,
+      title: title || "",
+      type: type || "movie",
+      posterUrl: posterUrl || "",
+      addedAt: new Date().toISOString()
+    };
+    playlist.items.push(newItem);
+    res.status(201).json({ message: "Media item added to playlist successfully.", item: newItem });
+  } catch (error) {
+    console.error("Error adding item to playlist:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// 5. Get all media items in a playlist
+app.get("/playlists/:id/items", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const userId = await getUserId(req);
+    const playlist = playlists.find(p => p.id === id);
+    if (!playlist) {
+      return res.status(404).json({ error: "Playlist not found." });
+    }
+    if (playlist.ownerId !== userId && !playlist.isCollaborative) {
+      return res.status(403).json({ error: "You do not have access to this playlist." });
+    }
+    res.json({ items: playlist.items });
+  } catch (error) {
+    console.error("Error fetching playlist items:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// 6. Remove a media item from a playlist
+app.delete("/playlists/:id/items/:itemId", async (req, res) => {
+  const { id, itemId } = req.params;
+  try {
+    const userId = await getUserId(req);
+    const playlist = playlists.find(p => p.id === id);
+    if (!playlist) {
+      return res.status(404).json({ error: "Playlist not found." });
+    }
+    if (playlist.ownerId !== userId && !playlist.isCollaborative) {
+      return res.status(403).json({ error: "You do not have access to this playlist." });
+    }
+    const itemIdx = playlist.items.findIndex(item => item.itemId === itemId);
+    if (itemIdx === -1) {
+      return res.status(404).json({ error: "Item not found in playlist." });
+    }
+    playlist.items.splice(itemIdx, 1);
+    res.json({ message: "Media item removed from playlist successfully." });
+  } catch (error) {
+    console.error("Error removing item from playlist:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// 7. Save captured video timestamps (highlights)
+app.post("/highlights", async (req, res) => {
+  const { mediaId, startTime, endTime, commentary } = req.body;
+  if (!mediaId || startTime === undefined || endTime === undefined) {
+    return res.status(400).json({ error: "mediaId, startTime, and endTime are required." });
+  }
+  try {
+    const userId = await getUserId(req);
+    const generateShareCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+    let shareCode = generateShareCode();
+    while (highlights[shareCode]) {
+      shareCode = generateShareCode();
+    }
+    highlights[shareCode] = {
+      mediaId,
+      startTime: parseFloat(startTime),
+      endTime: parseFloat(endTime),
+      commentary: commentary || "",
+      creatorId: userId,
+      createdAt: new Date().toISOString()
+    };
+    res.status(201).json({
+      message: "Highlight saved successfully.",
+      code: shareCode,
+      highlight: highlights[shareCode]
+    });
+  } catch (error) {
+    console.error("Error saving highlight:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// 8. Retrieve highlight details by share code
+app.get("/highlights/:code", (req, res) => {
+  const { code } = req.params;
+  const highlight = highlights[code];
+  if (!highlight) {
+    return res.status(404).json({ error: "Highlight not found." });
+  }
+  res.json(highlight);
 });
 
 // Health check endpoint

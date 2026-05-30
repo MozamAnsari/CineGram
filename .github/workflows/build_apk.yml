@@ -1,0 +1,37 @@
+name: Build Android APK
+on: [push]
+
+jobs:
+  build:
+    name: Compile Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version-file: frontend/pubspec.yaml # Automatically uses the Flutter SDK compatible with your pubspec
+
+      - name: Install Dependencies
+        run: flutter pub get
+        working-directory: frontend
+
+      - name: Build Release APK
+        run: flutter build apk --release --no-tree-shake-icons
+        working-directory: frontend
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinegram-release-apk
+          path: frontend/build/app/outputs/flutter-apk/app-release.apk
