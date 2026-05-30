@@ -477,7 +477,7 @@ class _TvIptvScreenState extends State<TvIptvScreen> {
 
                         // Colorful category highlights for TV simulator
                         Color glowColor = primaryColor;
-                        if (cat == 'Sports') glowColor = Colors.emeraldAccent;
+                        if (cat == 'Sports') glowColor = Colors.greenAccent;
                         if (cat == 'News') glowColor = Colors.redAccent;
                         if (cat == 'Movies') glowColor = Colors.amberAccent;
                         if (cat == 'Entertainment') glowColor = Colors.purpleAccent;
@@ -583,7 +583,7 @@ class _TvIptvScreenState extends State<TvIptvScreen> {
                               final isSelected = _activeChannel?.name == ch.name;
 
                               Color categoryColor = primaryColor;
-                              if (ch.category == 'Sports') categoryColor = Colors.emeraldAccent;
+                              if (ch.category == 'Sports') categoryColor = Colors.greenAccent;
                               if (ch.category == 'News') categoryColor = Colors.redAccent;
                               if (ch.category == 'Movies') categoryColor = Colors.amberAccent;
                               if (ch.category == 'Entertainment') categoryColor = Colors.purpleAccent;

@@ -6,6 +6,8 @@ import 'package:shimmer/shimmer.dart';
 import '../models/media_item.dart';
 import '../widgets/glassmorphic_card.dart';
 import 'details.dart';
+import '../services/api_service.dart';
+import '../services/voice_service.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({Key? key}) : super(key: key);
@@ -47,8 +49,35 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     _debounce = Timer(const Duration(milliseconds: 400), () {
-      _executeSearch();
+      _executeSemanticSearch();
     });
+  }
+
+  Future<void> _executeSemanticSearch() async {
+    if (_searchQuery.trim().isEmpty) {
+      setState(() {
+        _searchResults = mockMediaDatabase;
+        _isLoading = false;
+      });
+      return;
+    }
+    
+    try {
+      final items = await ApiService.semanticSearch(_searchQuery);
+      
+      // Filter by Type
+      List<MediaItem> filtered = items;
+      if (_selectedFilter != "All") {
+        filtered = items.where((item) => item.type == _selectedFilter).toList();
+      }
+      
+      setState(() {
+        _searchResults = filtered;
+        _isLoading = false;
+      });
+    } catch (e) {
+      _executeSearch();
+    }
   }
 
   void _executeSearch() {
@@ -72,6 +101,151 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _searchResults = tempResults;
       _isLoading = false;
+    });
+  }
+
+  void _startVoiceSearch() {
+    final voiceService = VoiceService();
+    
+    void listener() {
+      if (mounted) setState(() {});
+    }
+    voiceService.addListener(listener);
+
+    voiceService.startListening(
+      onResultComplete: (result) {
+        voiceService.removeListener(listener);
+        if (mounted) {
+          setState(() {
+            _searchController.text = result;
+            _searchQuery = result;
+            _isLoading = true;
+          });
+          _executeSemanticSearch();
+        }
+      },
+    );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              height: 280.0,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F0F11).withOpacity(0.95),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(32.0),
+                  topRight: Radius.circular(32.0),
+                ),
+                border: Border(
+                  top: BorderSide(color: Colors.white.withOpacity(0.08), width: 1.0),
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(32.0),
+                  topRight: Radius.circular(32.0),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 40.0,
+                      height: 4.0,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(2.0),
+                      ),
+                    ),
+                    const SizedBox(height: 28.0),
+                    Text(
+                      "Listening to your voice...",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white70,
+                        fontSize: 16.0,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12.0),
+                    Text(
+                      "Describe what you want to watch (e.g. Christopher Nolan)",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white30,
+                        fontSize: 12.0,
+                      ),
+                    ),
+                    const SizedBox(height: 32.0),
+                    
+                    // PULSING AUDIO WAVE VISUALIZER
+                    AnimatedBuilder(
+                      animation: voiceService,
+                      builder: (context, child) {
+                        final db = voiceService.decibelLevel;
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(7, (index) {
+                            final factor = (index - 3).abs();
+                            final height = 10.0 + (db * (1.0 - factor * 0.2)).clamp(10.0, 75.0);
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 100),
+                              margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                              width: 6.0,
+                              height: height,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Theme.of(context).primaryColor,
+                                    const Color(0xFFE50914),
+                                  ],
+                                  begin: Alignment.bottomCenter,
+                                  end: Alignment.topCenter,
+                                ),
+                                borderRadius: BorderRadius.circular(3.0),
+                              ),
+                            );
+                          }),
+                        );
+                      },
+                    ),
+                    
+                    const SizedBox(height: 36.0),
+                    GestureDetector(
+                      onTap: () {
+                        voiceService.stopListening();
+                        voiceService.removeListener(listener);
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(20.0),
+                          border: Border.all(color: Colors.white.withOpacity(0.08)),
+                        ),
+                        child: Text(
+                          "Cancel",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white,
+                            fontSize: 13.0,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((value) {
+      voiceService.stopListening();
+      voiceService.removeListener(listener);
     });
   }
 
@@ -156,7 +330,10 @@ class _SearchScreenState extends State<SearchScreen> {
                           icon: const Icon(Icons.clear_rounded, color: Colors.white70),
                           onPressed: _clearSearch,
                         )
-                      : null,
+                      : IconButton(
+                          icon: Icon(Icons.mic_rounded, color: Theme.of(context).primaryColor),
+                          onPressed: _startVoiceSearch,
+                        ),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(vertical: 14.0),
                 ),

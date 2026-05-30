@@ -12,6 +12,7 @@ import '../services/api_service.dart';
 import 'details.dart';
 import 'profile_select.dart';
 import 'tv_iptv.dart';
+import '../services/voice_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // REUSABLE PREMIUM D-PAD FOCUSABLE WIDGET FOR 10-FOOT TV UI
@@ -692,17 +693,166 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
     );
   }
 
-  void _performSearch(String query) {
-    setState(() {
-      if (query.trim().isEmpty) {
+  Future<void> _performSearch(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() {
         _searchResults = List.from(mockMediaDatabase);
-      } else {
+      });
+      return;
+    }
+
+    try {
+      final items = await ApiService.semanticSearch(query);
+      setState(() {
+        _searchResults = items;
+      });
+    } catch (e) {
+      // Safe fallback
+      setState(() {
         _searchResults = mockMediaDatabase.where((item) =>
           item.title.toLowerCase().contains(query.toLowerCase()) ||
           item.synopsis.toLowerCase().contains(query.toLowerCase()) ||
           item.genres.any((g) => g.toLowerCase().contains(query.toLowerCase()))
         ).toList();
-      }
+      });
+    }
+  }
+
+  void _startTvVoiceSearch() {
+    final voiceService = VoiceService();
+    
+    void listener() {
+      if (mounted) setState(() {});
+    }
+    voiceService.addListener(listener);
+
+    voiceService.startListening(
+      onResultComplete: (result) {
+        voiceService.removeListener(listener);
+        if (mounted) {
+          setState(() {
+            _searchController.text = result;
+          });
+          _performSearch(result);
+        }
+      },
+    );
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              child: Container(
+                width: 480.0,
+                height: 320.0,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F0F11).withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(32.0),
+                  border: Border.all(color: Colors.white.withOpacity(0.08), width: 1.0),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Theme.of(context).primaryColor.withOpacity(0.2),
+                      blurRadius: 40.0,
+                      spreadRadius: 4.0,
+                    )
+                  ]
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.mic_rounded,
+                      color: Theme.of(context).primaryColor,
+                      size: 48.0,
+                    ),
+                    const SizedBox(height: 20.0),
+                    Text(
+                      "SPEAK NOW",
+                      style: GoogleFonts.cinzel(
+                        color: Colors.white,
+                        fontSize: 22.0,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2.0,
+                      ),
+                    ),
+                    const SizedBox(height: 8.0),
+                    Text(
+                      "Describe what you want to watch...",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white30,
+                        fontSize: 14.0,
+                      ),
+                    ),
+                    const SizedBox(height: 32.0),
+                    
+                    // PULSING AUDIO WAVE VISUALIZER
+                    AnimatedBuilder(
+                      animation: voiceService,
+                      builder: (context, child) {
+                        final db = voiceService.decibelLevel;
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(7, (index) {
+                            final factor = (index - 3).abs();
+                            final height = 12.0 + (db * (1.0 - factor * 0.2)).clamp(12.0, 90.0);
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 100),
+                              margin: const EdgeInsets.symmetric(horizontal: 6.0),
+                              width: 8.0,
+                              height: height,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Theme.of(context).primaryColor,
+                                    const Color(0xFFE50914),
+                                  ],
+                                  begin: Alignment.bottomCenter,
+                                  end: Alignment.topCenter,
+                                ),
+                                borderRadius: BorderRadius.circular(4.0),
+                              ),
+                            );
+                          }),
+                        );
+                      },
+                    ),
+                    
+                    const SizedBox(height: 28.0),
+                    TvFocusable(
+                      borderRadius: BorderRadius.circular(20.0),
+                      onTap: () {
+                        voiceService.stopListening();
+                        voiceService.removeListener(listener);
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 12.0),
+                        color: Colors.white.withOpacity(0.04),
+                        child: Text(
+                          "CANCEL",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white,
+                            fontSize: 13.0,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((value) {
+      voiceService.stopListening();
+      voiceService.removeListener(listener);
     });
   }
 
@@ -1366,6 +1516,22 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
                 ),
               ),
               const SizedBox(width: 16.0),
+              
+              // Voice search action
+              TvFocusable(
+                borderRadius: BorderRadius.circular(16.0),
+                onTap: _startTvVoiceSearch,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14.0),
+                  color: Colors.white.withOpacity(0.08),
+                  child: Icon(
+                    Icons.mic_rounded,
+                    color: Theme.of(context).primaryColor,
+                    size: 24.0,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12.0),
               
               // Clear action
               TvFocusable(

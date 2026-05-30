@@ -446,4 +446,24 @@ class ApiService {
       return [];
     }
   }
+
+  /// Runs a semantic natural language search query against the backend listings database.
+  static Future<List<MediaItem>> semanticSearch(String query) async {
+    try {
+      final response = await _dio.get('/listings/search', queryParameters: {'q': query});
+      final List<dynamic> results = response.data['results'] ?? [];
+      return results.map((l) => mapPayloadToMediaItem(Map<String, dynamic>.from(l['item'] ?? l))).toList();
+    } catch (e) {
+      developer.log('Error executing semantic search, using local fuzzy fallback', error: e, name: 'ApiService.semanticSearch');
+      
+      // Fallback: local fuzzy matching against mock database for offline / unconfigured compatibility
+      final queryLower = query.toLowerCase();
+      return mockMediaDatabase.where((item) {
+        final matchesTitle = item.title.toLowerCase().contains(queryLower);
+        final matchesGenre = item.genres.any((g) => g.toLowerCase().contains(queryLower));
+        final matchesSynopsis = item.synopsis.toLowerCase().contains(queryLower);
+        return matchesTitle || matchesGenre || matchesSynopsis;
+      }).toList();
+    }
+  }
 }

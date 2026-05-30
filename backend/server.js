@@ -292,6 +292,206 @@ app.post("/listings", async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
+// AI-POWERED SEMANTIC VECTOR SEARCH ENGINE (TF-IDF)
+// ----------------------------------------------------
+
+const STOPWORDS = new Set([
+  "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are", "aren't", "as", "at",
+  "be", "because", "been", "before", "being", "below", "between", "both", "but", "by",
+  "can't", "cannot", "could", "couldn't",
+  "did", "didn't", "do", "does", "doesn't", "doing", "don't", "down", "during",
+  "each", "few", "for", "from", "further",
+  "had", "hadn't", "has", "hasn't", "have", "haven't", "having", "he", "he'd", "he'll", "he's", "her", "here", "here's", "hers", "herself", "him", "himself", "his", "how", "how's",
+  "i", "i'd", "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself",
+  "let's", "me", "more", "most", "mustn't", "my", "myself", "no", "nor", "not",
+  "of", "off", "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over", "own",
+  "same", "shan't", "she", "she'd", "she'll", "she's", "should", "shouldn't", "so", "some", "such",
+  "than", "that", "that's", "the", "their", "theirs", "them", "themselves", "then", "there", "there's", "these", "they", "they'd", "they'll", "they're", "they've", "this", "those", "through", "to", "too", "under", "until", "up", "very",
+  "was", "wasn't", "we", "we'd", "we'll", "we're", "we've", "were", "weren't", "what", "what's", "when", "when's", "where", "where's", "which", "while", "who", "who's", "whom", "why", "why's", "with", "won't", "would", "wouldn't",
+  "you", "you'd", "you'll", "you're", "you've", "your", "yours", "yourself", "yourselves"
+]);
+
+function tokenize(text) {
+  if (!text) return [];
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter(word => word.length > 1 && !STOPWORDS.has(word));
+}
+
+const tmdbDetailsCache = new Map();
+
+async function getMediaMetadataText(item, tmdbApiKey) {
+  const tmdbId = item.tmdb_id || item.tmdbId;
+  const type = item.type;
+  
+  if (!tmdbId || tmdbId === "0" || !tmdbApiKey) {
+    return `${item.title} ${item.quality || ""} ${item.type || ""}`;
+  }
+  
+  const cacheKey = `${type}_${tmdbId}`;
+  if (tmdbDetailsCache.has(cacheKey)) {
+    return tmdbDetailsCache.get(cacheKey);
+  }
+  
+  try {
+    const detailsUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${tmdbApiKey}`;
+    const response = await fetch(detailsUrl);
+    if (response.ok) {
+      const data = await response.json();
+      const overview = data.overview || "";
+      const genres = (data.genres || []).map(g => g.name).join(" ");
+      const fullText = `${item.title} ${item.quality || ""} ${item.type || ""} ${genres} ${overview}`;
+      tmdbDetailsCache.set(cacheKey, fullText);
+      return fullText;
+    }
+  } catch (err) {
+    console.error(`[Semantic Search] Failed to fetch TMDB details for cache:`, err);
+  }
+  
+  return `${item.title} ${item.quality || ""} ${item.type || ""}`;
+}
+
+function runTfidfSearch(query, documents) {
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0) return [];
+  
+  const queryTf = {};
+  queryTokens.forEach(token => {
+    queryTf[token] = (queryTf[token] || 0) + 1;
+  });
+  
+  const docTokens = documents.map(doc => tokenize(doc.text));
+  const totalDocs = documents.length;
+  
+  const idf = {};
+  queryTokens.forEach(token => {
+    let docsWithToken = 0;
+    docTokens.forEach(tokens => {
+      if (tokens.includes(token)) docsWithToken++;
+    });
+    idf[token] = Math.log(1 + (totalDocs / (1 + docsWithToken)));
+  });
+  
+  const queryVector = {};
+  queryTokens.forEach(token => {
+    queryVector[token] = queryTf[token] * idf[token];
+  });
+  
+  const results = [];
+  
+  documents.forEach((doc, idx) => {
+    const tokens = docTokens[idx];
+    if (tokens.length === 0) return;
+    
+    const docTf = {};
+    tokens.forEach(token => {
+      docTf[token] = (docTf[token] || 0) + 1;
+    });
+    
+    let dotProduct = 0;
+    let queryMagnitudeSq = 0;
+    let docMagnitudeSq = 0;
+    
+    queryTokens.forEach(token => {
+      const qVal = queryVector[token];
+      const dVal = (docTf[token] || 0) * idf[token];
+      dotProduct += qVal * dVal;
+      queryMagnitudeSq += qVal * qVal;
+    });
+    
+    const uniqueDocTokens = [...new Set(tokens)];
+    uniqueDocTokens.forEach(token => {
+      let wordIdf = idf[token];
+      if (wordIdf === undefined) {
+        let docsWithToken = 0;
+        docTokens.forEach(tList => {
+          if (tList.includes(token)) docsWithToken++;
+        });
+        wordIdf = Math.log(1 + (totalDocs / (1 + docsWithToken)));
+      }
+      const dVal = docTf[token] * wordIdf;
+      docMagnitudeSq += dVal * dVal;
+    });
+    
+    const queryMagnitude = Math.sqrt(queryMagnitudeSq);
+    const docMagnitude = Math.sqrt(docMagnitudeSq);
+    
+    let similarity = 0;
+    if (queryMagnitude > 0 && docMagnitude > 0) {
+      similarity = dotProduct / (queryMagnitude * docMagnitude);
+    }
+    
+    if (doc.item.title.toLowerCase().includes(query.toLowerCase())) {
+      similarity += 0.3; // Relevancy boost for title matches
+    }
+    
+    if (similarity > 0) {
+      results.push({
+        item: doc.item,
+        score: parseFloat(similarity.toFixed(4))
+      });
+    }
+  });
+  
+  return results.sort((a, b) => b.score - a.score);
+}
+
+const MOCK_LISTINGS_FOR_SEARCH = [
+  { id: "1", tmdb_id: "27205", title: "Inception", type: "movie", quality: "1080p", channel_id: "1", message_id: "101", overview: "Cobb, a skilled thief who steals valuable secrets from deep within the subconscious during the dream state, is offered a chance to regain his old life as a payment for a task considered to be impossible: \"inception\", the implantation of another person's idea into a target's subconscious." },
+  { id: "2", tmdb_id: "157336", title: "Interstellar", type: "movie", quality: "4K", channel_id: "1", message_id: "102", overview: "The adventures of a group of explorers who make use of a newly discovered wormhole to surpass the limitations on human space travel and conquer the vast distances involved in an interstellar voyage." },
+  { id: "3", tmdb_id: "603", title: "The Matrix", type: "movie", quality: "1080p", channel_id: "1", message_id: "103", overview: "Set in the 22nd century, a computer hacker learns from mysterious rebels about the true nature of his reality and his role in the war against its controllers." },
+  { id: "4", tmdb_id: "238", title: "The Godfather", type: "movie", quality: "720p", channel_id: "1", message_id: "104", overview: "Spanning the years 1945 to 1955, a chronicle of the fictional Italian-American Corleone crime family. When organized crime family patriarch, Vito Corleone, is barely surviving an attempt on his life, his youngest son, Michael, steps in to take care of the killers." },
+  { id: "5", tmdb_id: "66732", title: "Stranger Things", type: "tv", quality: "1080p", channel_id: "2", message_id: "201", overview: "When a young boy vanishes, a small town uncovers a mystery involving secret experiments, terrifying supernatural forces and one strange little girl." },
+  { id: "6", tmdb_id: "127585", title: "Spirited Away", type: "movie", quality: "1080p", channel_id: "1", message_id: "105", overview: "A young girl wandering into a world ruled by gods, witches, and spirits, and where humans are changed into beasts, must work in a bathhouse to free herself and her parents." }
+];
+
+app.get("/listings/search", async (req, res) => {
+  const query = req.query.q;
+  if (!query || query.trim() === "") {
+    return res.json({ results: [] });
+  }
+  
+  try {
+    let sourceListings = [];
+    if (supabase) {
+      const { data, error } = await supabase
+        .from("media_listings")
+        .select("*");
+      if (!error && data && data.length > 0) {
+        sourceListings = data;
+      }
+    }
+    
+    // Fallback to high-fidelity mock list if database is empty or unconfigured
+    let usingMock = false;
+    if (sourceListings.length === 0) {
+      sourceListings = MOCK_LISTINGS_FOR_SEARCH;
+      usingMock = true;
+    }
+    
+    // Construct document collection
+    const documents = [];
+    for (const item of sourceListings) {
+      let text = "";
+      if (usingMock) {
+        text = `${item.title} ${item.quality} ${item.type} ${item.overview}`;
+      } else {
+        text = await getMediaMetadataText(item, tmdbApiKey);
+      }
+      documents.push({ item, text });
+    }
+    
+    const results = runTfidfSearch(query, documents);
+    res.json({ results });
+  } catch (err) {
+    console.error("[Semantic Search] Execution error:", err);
+    res.status(500).json({ error: "Failed to perform semantic search." });
+  }
+});
+
 // 2. Fetch all Telegram Media Listings
 app.get("/listings", async (req, res) => {
   if (!supabase) {

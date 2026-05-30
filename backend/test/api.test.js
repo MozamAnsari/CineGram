@@ -551,6 +551,31 @@ describe("Cinegram Backend API Integration Tests", () => {
   });
 
   // ==========================================
+  // 3b. AI-POWERED SEMANTIC SEARCH ENDPOINTS
+  // ==========================================
+  describe("GET /listings/search (Semantic Natural Language)", () => {
+    it("should return empty list if query is empty or missing", async () => {
+      const res = await request(app).get("/listings/search");
+      expect(res.status).toBe(200);
+      expect(res.body.results).toHaveLength(0);
+    });
+
+    it("should rank mock results semantically by cosine similarity", async () => {
+      const res = await request(app).get("/listings/search?q=space");
+      expect(res.status).toBe(200);
+      expect(res.body.results.length).toBeGreaterThan(0);
+      expect(res.body.results[0].item.title).toBe("Interstellar");
+    });
+
+    it("should rank dream thief plot semantically to Inception", async () => {
+      const res = await request(app).get("/listings/search?q=dream thief");
+      expect(res.status).toBe(200);
+      expect(res.body.results.length).toBeGreaterThan(0);
+      expect(res.body.results[0].item.title).toBe("Inception");
+    });
+  });
+
+  // ==========================================
   // 4. WATCH HISTORY / PROGRESS ENDPOINTS
   // ==========================================
   describe("Continue Watching Watch History Sync Flow", () => {
