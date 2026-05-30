@@ -20,7 +20,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version-file: frontend/pubspec.yaml # Automatically uses the Flutter SDK compatible with your pubspec
+          flutter-version: '3.24.0'
 
       - name: Install Dependencies
         run: flutter pub get
