@@ -804,6 +804,8 @@ app.get("/health", (req, res) => {
     status: "healthy",
     telegram_connected: tgClient !== null,
     supabase_configured: !!process.env.SUPABASE_URL,
+    supabase_key_configured: !!process.env.SUPABASE_KEY,
+    supabase_key_length: process.env.SUPABASE_KEY ? process.env.SUPABASE_KEY.length : 0,
     tmdb_configured: !!process.env.TMDB_API_KEY,
   });
 });
