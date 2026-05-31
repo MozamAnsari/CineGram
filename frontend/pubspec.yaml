@@ -26,7 +26,7 @@ dependencies:
   cached_network_image: ^3.3.1
   flutter_blurhash: ^0.8.2
   shimmer: ^3.0.0
-  flutter_spinkit: ^5.2.0
+  flutter_spinkit: 5.2.0
 
   # Video Playback Components
   video_player: ^2.8.2
