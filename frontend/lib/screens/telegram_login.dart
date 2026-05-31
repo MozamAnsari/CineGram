@@ -92,11 +92,22 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
       if (e is DioException) {
         if (e.response != null) {
           final errData = e.response?.data;
-          String? serverError;
-          if (errData is Map) {
-            serverError = errData['error']?.toString();
+          final code = e.response?.statusCode;
+          String serverError = "";
+          if (errData != null) {
+            if (errData is Map) {
+              serverError = errData['error']?.toString() ?? errData.toString();
+            } else {
+              serverError = errData.toString();
+            }
           }
-          details = "Server response: ${serverError ?? e.response?.statusMessage ?? e.response?.statusCode}";
+          if (serverError.isEmpty) {
+            serverError = e.response?.statusMessage ?? "No error body details";
+          }
+          if (serverError.length > 180) {
+            serverError = serverError.substring(0, 180) + "...";
+          }
+          details = "Server responded with Status $code: $serverError";
         } else {
           details = "Network connection failed. Verify that your backend server is running and accessible. Error: ${e.message ?? e.type.toString()}";
         }
@@ -174,11 +185,22 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
       if (e is DioException) {
         if (e.response != null) {
           final errData = e.response?.data;
-          String? serverError;
-          if (errData is Map) {
-            serverError = errData['error']?.toString();
+          final code = e.response?.statusCode;
+          String serverError = "";
+          if (errData != null) {
+            if (errData is Map) {
+              serverError = errData['error']?.toString() ?? errData.toString();
+            } else {
+              serverError = errData.toString();
+            }
           }
-          details = "Server response: ${serverError ?? e.response?.statusMessage ?? e.response?.statusCode}";
+          if (serverError.isEmpty) {
+            serverError = e.response?.statusMessage ?? "No error body details";
+          }
+          if (serverError.length > 180) {
+            serverError = serverError.substring(0, 180) + "...";
+          }
+          details = "Server responded with Status $code: $serverError";
         } else {
           details = "Network connection failed. Error: ${e.message ?? e.type.toString()}";
         }
