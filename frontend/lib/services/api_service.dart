@@ -98,12 +98,12 @@ class ApiService {
     final cleanUrl = url.trim().isEmpty ? _defaultBaseUrl : url.trim();
     final tempDio = Dio(BaseOptions(
       baseUrl: cleanUrl,
-      connectTimeout: const Duration(seconds: 3),
-      receiveTimeout: const Duration(seconds: 3),
+      connectTimeout: const Duration(seconds: 45),
+      receiveTimeout: const Duration(seconds: 45),
     ));
     try {
-      // Request /listings or another base endpoint to check connectivity
-      final response = await tempDio.get('/listings');
+      // Request /health endpoint (public & fast) to check connectivity
+      final response = await tempDio.get('/health');
       return response.statusCode == 200;
     } catch (e) {
       developer.log('Connection test failed for URL: $cleanUrl', error: e, name: 'ApiService');

@@ -70,8 +70,8 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
         data: {"phoneNumber": phone},
         options: Options(
           headers: {"Content-Type": "application/json"},
-          receiveTimeout: const Duration(seconds: 15),
-          sendTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 60),
+          sendTimeout: const Duration(seconds: 60),
         ),
       );
 
@@ -121,7 +121,11 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
           "code": code,
           "password": password.isEmpty ? null : password
         },
-        options: Options(headers: {"Content-Type": "application/json"}),
+        options: Options(
+          headers: {"Content-Type": "application/json"},
+          receiveTimeout: const Duration(seconds: 60),
+          sendTimeout: const Duration(seconds: 60),
+        ),
       );
 
       if (response.statusCode == 200 && response.data['success'] == true) {
@@ -326,6 +330,21 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
                                         ),
                                 ),
                               ),
+                              if (_isLoading) ...[
+                                const SizedBox(height: 12.0),
+                                Center(
+                                  child: Text(
+                                    "Waking up backend gateway on Render...\n(Render free servers cold-start can take up to 60s) 🍿",
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: accentColor.withOpacity(0.7),
+                                      fontSize: 11.0,
+                                      height: 1.4,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ] else ...[
                               // Verification Code Input Flow
                               Text(
@@ -436,6 +455,21 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
                                   ),
                                 ],
                               ),
+                              if (_isLoading) ...[
+                                const SizedBox(height: 12.0),
+                                Center(
+                                  child: Text(
+                                    "Waking up backend gateway on Render...\n(Render free servers cold-start can take up to 60s) 🍿",
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: accentColor.withOpacity(0.7),
+                                      fontSize: 11.0,
+                                      height: 1.4,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ],
                         ),
