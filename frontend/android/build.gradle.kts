@@ -30,6 +30,7 @@ subprojects {
                 "targetSdkVersion" to 34
             ))
         }
+        project.dependencies.add("implementation", "androidx.core:core-ktx:1.12.0")
     }
     plugins.withId("com.android.application") {
         val android = extensions.findByName("android")
