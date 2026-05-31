@@ -88,8 +88,21 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
         });
       }
     } catch (e) {
+      String details = e.toString();
+      if (e is DioException) {
+        if (e.response != null) {
+          final errData = e.response?.data;
+          String? serverError;
+          if (errData is Map) {
+            serverError = errData['error']?.toString();
+          }
+          details = "Server response: ${serverError ?? e.response?.statusMessage ?? e.response?.statusCode}";
+        } else {
+          details = "Network connection failed. Verify that your backend server is running and accessible. Error: ${e.message ?? e.type.toString()}";
+        }
+      }
       setState(() {
-        _errorMessage = "Gateway connection error. Check your server config or API Base URL in settings.";
+        _errorMessage = "Gateway Connection Error:\n$details";
         _isLoading = false;
       });
     }
@@ -157,8 +170,21 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
         });
       }
     } catch (e) {
+      String details = e.toString();
+      if (e is DioException) {
+        if (e.response != null) {
+          final errData = e.response?.data;
+          String? serverError;
+          if (errData is Map) {
+            serverError = errData['error']?.toString();
+          }
+          details = "Server response: ${serverError ?? e.response?.statusMessage ?? e.response?.statusCode}";
+        } else {
+          details = "Network connection failed. Error: ${e.message ?? e.type.toString()}";
+        }
+      }
       setState(() {
-        _errorMessage = "Authentication failed. Double check your code or 2FA password.";
+        _errorMessage = "Authentication Failed:\n$details";
         _isLoading = false;
       });
     }
