@@ -53,9 +53,19 @@ class ApiService {
   /// Static getter for the base URL
   static String get baseUrl => _currentBaseUrl;
 
+  /// Private helper to clean and sanitize URLs by trimming whitespace and trailing slashes.
+  static String _cleanUrl(String url) {
+    String cleaned = url.trim();
+    while (cleaned.endsWith('/')) {
+      cleaned = cleaned.substring(0, cleaned.length - 1);
+    }
+    return cleaned;
+  }
+
   /// Static setter for the base URL. Updates current URL and Dio options.
   static set baseUrl(String url) {
-    _currentBaseUrl = url.trim().isEmpty ? _defaultBaseUrl : url.trim();
+    final cleaned = _cleanUrl(url);
+    _currentBaseUrl = cleaned.isEmpty ? _defaultBaseUrl : cleaned;
     _dio.options.baseUrl = _currentBaseUrl;
     developer.log('API Service baseUrl updated to: $_currentBaseUrl', name: 'ApiService');
   }
@@ -95,7 +105,8 @@ class ApiService {
 
   /// Tests connectivity to a given server URL.
   static Future<bool> testConnection(String url) async {
-    final cleanUrl = url.trim().isEmpty ? _defaultBaseUrl : url.trim();
+    final cleaned = _cleanUrl(url);
+    final cleanUrl = cleaned.isEmpty ? _defaultBaseUrl : cleaned;
     final tempDio = Dio(BaseOptions(
       baseUrl: cleanUrl,
       connectTimeout: const Duration(seconds: 45),
