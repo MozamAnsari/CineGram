@@ -440,7 +440,38 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
                           ],
                         ),
                       ),
-                      const SizedBox(height: 48.0),
+                      const SizedBox(height: 24.0),
+                      TextButton.icon(
+                        onPressed: () async {
+                          // Bypasses Telegram login for preview/explore mode
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setBool('telegram_logged_in', false);
+                          await prefs.setString('telegram_phone', 'Guest Explorer');
+                          
+                          if (!mounted) return;
+                          Navigator.of(context).pushReplacement(
+                            PageRouteBuilder(
+                              pageBuilder: (context, animation, secondaryAnimation) => const ProfileSelectScreen(),
+                              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                return FadeTransition(opacity: animation, child: child);
+                              },
+                              transitionDuration: const Duration(milliseconds: 600),
+                            ),
+                          );
+                        },
+                        icon: Icon(Icons.auto_awesome_rounded, color: accentColor.withOpacity(0.8), size: 16.0),
+                        label: Text(
+                          "Explore App & Settings First",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white70,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13.0,
+                            letterSpacing: 0.5,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24.0),
                     ],
                   ),
                 ),

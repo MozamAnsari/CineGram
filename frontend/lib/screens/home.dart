@@ -1029,10 +1029,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return isCorrect;
   }
 
-  void _showServerSettingsBottomSheet(BuildContext context) {
+  Future<void> _showServerSettingsBottomSheet(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    final bool isTelegramLoggedIn = prefs.getBool('telegram_logged_in') ?? false;
+
     final TextEditingController urlController = TextEditingController(text: ApiService.baseUrl);
-    final TextEditingController m3uController = TextEditingController();
-    final TextEditingController epgController = TextEditingController();
+    final TextEditingController m3uController = TextEditingController(text: prefs.getString('iptv_m3u_url') ?? 'https://cinegram.io/playlist.m3u');
+    final TextEditingController epgController = TextEditingController(text: prefs.getString('iptv_epg_url') ?? 'http://cinegram.io/epg.xml');
     final TextEditingController hexColorController = TextEditingController();
     
     final Map<String, bool> hasPinMap = {};
@@ -1059,35 +1062,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'Profile 4': TextEditingController(),
     };
 
-    bool multiProfileEnabled = true;
-    String connectedPhone = "";
+    bool multiProfileEnabled = prefs.getBool('multi_profile_enabled') ?? true;
+    String connectedPhone = prefs.getString('telegram_phone') ?? "";
 
     bool? isConnected;
     bool isChecking = false;
 
-    bool useExternalPlayer = false;
-    String selectedPlayerPackage = 'android.intent.action.VIEW';
-    String selectedPlayerName = 'System Default Player';
+    bool useExternalPlayer = prefs.getBool('use_external_player') ?? false;
+    String selectedPlayerPackage = prefs.getString('selected_external_player_package') ?? 'android.intent.action.VIEW';
+    String selectedPlayerName = prefs.getString('selected_external_player_name') ?? 'System Default Player';
 
-    // Load pre-configured IPTV URLs and profile parameters
-    SharedPreferences.getInstance().then((prefs) {
-      m3uController.text = prefs.getString('iptv_m3u_url') ?? 'https://cinegram.io/playlist.m3u';
-      epgController.text = prefs.getString('iptv_epg_url') ?? 'http://cinegram.io/epg.xml';
-      useExternalPlayer = prefs.getBool('use_external_player') ?? false;
-      selectedPlayerPackage = prefs.getString('selected_external_player_package') ?? 'android.intent.action.VIEW';
-      selectedPlayerName = prefs.getString('selected_external_player_name') ?? 'System Default Player';
-      multiProfileEnabled = prefs.getBool('multi_profile_enabled') ?? true;
-      connectedPhone = prefs.getString('telegram_phone') ?? "+1 *** *** ****";
-      
-      final roles = ['Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'];
-      for (final role in roles) {
-        nameControllers[role]!.text = prefs.getString('profile_name_$role') ?? role;
-        avatarControllers[role]!.text = prefs.getString('profile_avatar_$role') ?? '';
-        hasPinMap[role] = prefs.getBool('profile_has_pin_$role') ?? (role == 'Profile 1');
-        pinControllers[role]!.text = prefs.getString('profile_pin_$role') ?? '1234';
-        isKidsMap[role] = prefs.getBool('profile_is_kids_$role') ?? false;
-      }
-    });
+    final roles = ['Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'];
+    for (final role in roles) {
+      nameControllers[role]!.text = prefs.getString('profile_name_$role') ?? role;
+      avatarControllers[role]!.text = prefs.getString('profile_avatar_$role') ?? '';
+      hasPinMap[role] = prefs.getBool('profile_has_pin_$role') ?? (role == 'Profile 1');
+      pinControllers[role]!.text = prefs.getString('profile_pin_$role') ?? '1234';
+      isKidsMap[role] = prefs.getBool('profile_is_kids_$role') ?? false;
+    }
 
     // Helper function to test connection in bottom sheet
     Future<void> checkConnection(StateSetter setSheetState, String url) async {
@@ -1239,17 +1231,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                               Container(
                                                 padding: const EdgeInsets.all(10.0),
                                                 decoration: BoxDecoration(
-                                                  color: Colors.blueAccent.withOpacity(0.1),
+                                                  color: (isTelegramLoggedIn ? Colors.blueAccent : Colors.amberAccent).withOpacity(0.1),
                                                   shape: BoxShape.circle,
                                                 ),
-                                                child: const Icon(Icons.phone_android_rounded, color: Colors.blueAccent, size: 20.0),
+                                                child: Icon(
+                                                  isTelegramLoggedIn ? Icons.phone_android_rounded : Icons.cloud_off_rounded,
+                                                  color: isTelegramLoggedIn ? Colors.blueAccent : Colors.amberAccent,
+                                                  size: 20.0,
+                                                ),
                                               ),
                                               const SizedBox(width: 12.0),
                                               Column(
                                                 crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
                                                   Text(
-                                                    "CONNECTED NUMBER",
+                                                    "GATEWAY STATUS",
                                                     style: GoogleFonts.plusJakartaSans(
                                                       color: Colors.white38,
                                                       fontSize: 10.0,
@@ -1258,7 +1254,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                                   ),
                                                   const SizedBox(height: 2.0),
                                                   Text(
-                                                    connectedPhone.isNotEmpty ? connectedPhone : "Active Gateway Session",
+                                                    isTelegramLoggedIn 
+                                                        ? (connectedPhone.isNotEmpty ? connectedPhone : "Active Gateway Session")
+                                                        : "Guest Explorer Mode",
                                                     style: GoogleFonts.plusJakartaSans(
                                                       color: Colors.white,
                                                       fontSize: 14.0,
@@ -1272,25 +1270,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
                                             decoration: BoxDecoration(
-                                              color: Colors.greenAccent.withOpacity(0.1),
+                                              color: (isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent).withOpacity(0.1),
                                               borderRadius: BorderRadius.circular(8.0),
-                                              border: Border.all(color: Colors.greenAccent.withOpacity(0.2)),
+                                              border: Border.all(color: (isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent).withOpacity(0.2)),
                                             ),
                                             child: Row(
                                               children: [
                                                 Container(
                                                   width: 6.0,
                                                   height: 6.0,
-                                                  decoration: const BoxDecoration(
-                                                    color: Colors.greenAccent,
+                                                  decoration: BoxDecoration(
+                                                    color: isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent,
                                                     shape: BoxShape.circle,
                                                   ),
                                                 ),
                                                 const SizedBox(width: 6.0),
                                                 Text(
-                                                  "ONLINE",
+                                                  isTelegramLoggedIn ? "ONLINE" : "OFFLINE",
                                                   style: GoogleFonts.plusJakartaSans(
-                                                    color: Colors.greenAccent,
+                                                    color: isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent,
                                                     fontSize: 10.0,
                                                     fontWeight: FontWeight.w900,
                                                     letterSpacing: 0.5,
@@ -1302,175 +1300,223 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                         ],
                                       ),
                                       const SizedBox(height: 20.0),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: ElevatedButton.icon(
-                                              onPressed: () {
-                                                Navigator.pop(context);
-                                                Navigator.push(
-                                                  context,
-                                                  MaterialPageRoute(builder: (context) => const ChannelSelectorScreen()),
-                                                );
-                                              },
-                                              icon: const Icon(Icons.campaign_rounded, color: Colors.black, size: 16),
-                                              label: Text(
-                                                "Library Chats",
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: GoogleFonts.plusJakartaSans(
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.black,
-                                                  fontSize: 11.5,
+                                      if (isTelegramLoggedIn) ...[
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: ElevatedButton.icon(
+                                                onPressed: () {
+                                                  Navigator.pop(context);
+                                                  Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(builder: (context) => const ChannelSelectorScreen()),
+                                                  );
+                                                },
+                                                icon: const Icon(Icons.campaign_rounded, color: Colors.black, size: 16),
+                                                label: Text(
+                                                  "Library Chats",
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.black,
+                                                    fontSize: 11.5,
+                                                  ),
                                                 ),
-                                              ),
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: primaryColor,
-                                                padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(10.0),
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: primaryColor,
+                                                  padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(10.0),
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                          const SizedBox(width: 10.0),
-                                          Expanded(
-                                            child: OutlinedButton.icon(
-                                              onPressed: () {
-                                                Navigator.pop(context);
-                                                Navigator.push(
-                                                  context,
-                                                  MaterialPageRoute(builder: (context) => const UnresolvedQueueScreen()),
-                                                );
-                                              },
-                                              icon: Icon(Icons.movie_filter_rounded, color: primaryColor, size: 16),
-                                              label: Text(
-                                                "Fix Matches",
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: GoogleFonts.plusJakartaSans(
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.white,
-                                                  fontSize: 11.5,
+                                            const SizedBox(width: 10.0),
+                                            Expanded(
+                                              child: OutlinedButton.icon(
+                                                onPressed: () {
+                                                  Navigator.pop(context);
+                                                  Navigator.push(
+                                                    context,
+                                                    MaterialPageRoute(builder: (context) => const UnresolvedQueueScreen()),
+                                                  );
+                                                },
+                                                icon: Icon(Icons.movie_filter_rounded, color: primaryColor, size: 16),
+                                                label: Text(
+                                                  "Fix Matches",
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow.ellipsis,
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.white,
+                                                    fontSize: 11.5,
+                                                  ),
                                                 ),
-                                              ),
-                                              style: OutlinedButton.styleFrom(
-                                                side: BorderSide(color: primaryColor, width: 1.0),
-                                                padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(10.0),
+                                                style: OutlinedButton.styleFrom(
+                                                  side: BorderSide(color: primaryColor, width: 1.0),
+                                                  padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(10.0),
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 16.0),
-                                      SizedBox(
-                                        width: double.infinity,
-                                        child: OutlinedButton.icon(
-                                          onPressed: () async {
-                                            final confirm = await showDialog<bool>(
-                                              context: context,
-                                              builder: (dialogCtx) => AlertDialog(
-                                                backgroundColor: const Color(0xFF0F0F12),
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(16.0),
-                                                  side: BorderSide(color: Colors.white.withOpacity(0.1)),
-                                                ),
-                                                title: Text(
-                                                  "Disconnect Gateway?",
-                                                  style: GoogleFonts.cinzel(color: Colors.white, fontWeight: FontWeight.bold),
-                                                ),
-                                                content: Text(
-                                                  "Are you sure you want to log out and disconnect your Telegram account from Cinegram?",
-                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white70),
-                                                ),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () => Navigator.pop(dialogCtx, false),
-                                                    child: Text("Cancel", style: GoogleFonts.plusJakartaSans(color: Colors.white38)),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 16.0),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: OutlinedButton.icon(
+                                            onPressed: () async {
+                                              final confirm = await showDialog<bool>(
+                                                context: context,
+                                                builder: (dialogCtx) => AlertDialog(
+                                                  backgroundColor: const Color(0xFF0F0F12),
+                                                  shape: RoundedRectangleBorder(
+                                                    borderRadius: BorderRadius.circular(16.0),
+                                                    side: BorderSide(color: Colors.white.withOpacity(0.1)),
                                                   ),
-                                                  ElevatedButton(
-                                                    onPressed: () => Navigator.pop(dialogCtx, true),
-                                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                                                    child: Text("Disconnect", style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
+                                                  title: Text(
+                                                    "Disconnect Gateway?",
+                                                    style: GoogleFonts.cinzel(color: Colors.white, fontWeight: FontWeight.bold),
                                                   ),
-                                                ],
-                                              ),
-                                            );
+                                                  content: Text(
+                                                    "Are you sure you want to log out and disconnect your Telegram account from Cinegram?",
+                                                    style: GoogleFonts.plusJakartaSans(color: Colors.white70),
+                                                  ),
+                                                  actions: [
+                                                    TextButton(
+                                                      onPressed: () => Navigator.pop(dialogCtx, false),
+                                                      child: Text("Cancel", style: GoogleFonts.plusJakartaSans(color: Colors.white38)),
+                                                    ),
+                                                    ElevatedButton(
+                                                      onPressed: () => Navigator.pop(dialogCtx, true),
+                                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                                      child: Text("Disconnect", style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
 
-                                            if (confirm == true) {
-                                              setSheetState(() {
-                                                isChecking = true;
-                                              });
-                                              try {
-                                                await Dio().post(
-                                                  "${ApiService.baseUrl}/telegram/logout",
-                                                  options: Options(headers: {"Content-Type": "application/json"}),
-                                                );
-                                                
-                                                final prefs = await SharedPreferences.getInstance();
-                                                await prefs.setBool('telegram_logged_in', false);
-                                                await prefs.remove('telegram_session_string_cache');
-                                                await prefs.remove('telegram_phone');
-                                                
-                                                if (context.mounted) {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    SnackBar(
-                                                      content: Text(
-                                                        "Telegram Gateway disconnected successfully.",
-                                                        style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                              if (confirm == true) {
+                                                setSheetState(() {
+                                                  isChecking = true;
+                                                });
+                                                try {
+                                                  await Dio().post(
+                                                    "${ApiService.baseUrl}/telegram/logout",
+                                                    options: Options(headers: {"Content-Type": "application/json"}),
+                                                  );
+                                                  
+                                                  final prefs = await SharedPreferences.getInstance();
+                                                  await prefs.setBool('telegram_logged_in', false);
+                                                  await prefs.remove('telegram_session_string_cache');
+                                                  await prefs.remove('telegram_phone');
+                                                  
+                                                  if (context.mounted) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      SnackBar(
+                                                        content: Text(
+                                                          "Telegram Gateway disconnected successfully.",
+                                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                        ),
+                                                        backgroundColor: Colors.greenAccent,
                                                       ),
-                                                      backgroundColor: Colors.greenAccent,
-                                                    ),
-                                                  );
-                                                  Navigator.pop(stateContext);
-                                                  Navigator.of(context).pushAndRemoveUntil(
-                                                    MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
-                                                    (route) => false,
-                                                  );
-                                                }
-                                              } catch (e) {
-                                                final prefs = await SharedPreferences.getInstance();
-                                                await prefs.setBool('telegram_logged_in', false);
-                                                await prefs.remove('telegram_session_string_cache');
-                                                await prefs.remove('telegram_phone');
-                                                
-                                                if (context.mounted) {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    const SnackBar(
-                                                      content: Text("Error disconnecting remote session. Session cleared locally."),
-                                                      backgroundColor: Colors.orangeAccent,
-                                                    ),
-                                                  );
-                                                  Navigator.pop(stateContext);
-                                                  Navigator.of(context).pushAndRemoveUntil(
-                                                    MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
-                                                    (route) => false,
-                                                  );
+                                                    );
+                                                    Navigator.pop(stateContext);
+                                                    Navigator.of(context).pushAndRemoveUntil(
+                                                      MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
+                                                      (route) => false,
+                                                    );
+                                                  }
+                                                } catch (e) {
+                                                  final prefs = await SharedPreferences.getInstance();
+                                                  await prefs.setBool('telegram_logged_in', false);
+                                                  await prefs.remove('telegram_session_string_cache');
+                                                  await prefs.remove('telegram_phone');
+                                                  
+                                                  if (context.mounted) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text("Error disconnecting remote session. Session cleared locally."),
+                                                        backgroundColor: Colors.orangeAccent,
+                                                      ),
+                                                    );
+                                                    Navigator.pop(stateContext);
+                                                    Navigator.of(context).pushAndRemoveUntil(
+                                                      MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
+                                                      (route) => false,
+                                                    );
+                                                  }
                                                 }
                                               }
-                                            }
-                                          },
-                                          icon: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 18),
-                                          label: Text(
-                                            "Disconnect Telegram Gateway",
-                                            style: GoogleFonts.plusJakartaSans(
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.redAccent,
-                                              fontSize: 12.0,
+                                            },
+                                            icon: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 18),
+                                            label: Text(
+                                              "Disconnect Telegram Gateway",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.redAccent,
+                                                fontSize: 12.0,
+                                              ),
                                             ),
-                                          ),
-                                          style: OutlinedButton.styleFrom(
-                                            side: const BorderSide(color: Colors.redAccent, width: 1.2),
-                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(12.0),
+                                            style: OutlinedButton.styleFrom(
+                                              side: const BorderSide(color: Colors.redAccent, width: 1.2),
+                                              padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(12.0),
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      ),
+                                      ] else ...[
+                                        Container(
+                                          padding: const EdgeInsets.all(12.0),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(0.02),
+                                            borderRadius: BorderRadius.circular(12.0),
+                                            border: Border.all(color: Colors.white.withOpacity(0.04)),
+                                          ),
+                                          child: Text(
+                                            "You are in Guest Explorer mode. Syncing chats, automatic bots, and real-time scanning are locked until you connect your Telegram account.",
+                                            style: GoogleFonts.plusJakartaSans(
+                                              color: Colors.white38,
+                                              fontSize: 11.5,
+                                              height: 1.4,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16.0),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: ElevatedButton.icon(
+                                            onPressed: () {
+                                              Navigator.pop(stateContext); // Close settings drawer
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(builder: (context) => const TelegramLoginScreen()),
+                                              );
+                                            },
+                                            icon: const Icon(Icons.login_rounded, color: Colors.black, size: 16),
+                                            label: Text(
+                                              "Connect Telegram Gateway",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.black,
+                                                fontSize: 12.0,
+                                              ),
+                                            ),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: primaryColor,
+                                              padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(12.0),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
