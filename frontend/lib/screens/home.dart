@@ -1090,6 +1090,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         isConnected = status;
         isChecking = false;
       });
+      
+      // Explicit connection test SnackBar feedback
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              status == true
+                  ? "Connection Test Successful: Server Online!"
+                  : "Connection Test Failed: Server Offline or Link Invalid.",
+              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+            ),
+            backgroundColor: status == true ? Colors.greenAccent : Colors.redAccent,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
 
     showModalBottomSheet(
@@ -1097,11 +1113,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       barrierColor: Colors.black.withOpacity(0.6),
-      builder: (context) {
+      builder: (sheetContext) {
         return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final themeProvider = Provider.of<ThemeProvider>(context);
-            final primaryColor = Theme.of(context).primaryColor;
+          builder: (stateContext, setSheetState) {
+            final themeProvider = Provider.of<ThemeProvider>(stateContext);
+            final primaryColor = Theme.of(stateContext).primaryColor;
             
             final statusColor = isChecking
                 ? Colors.amber
@@ -1116,7 +1132,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
             return Padding(
               padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
+                bottom: MediaQuery.of(stateContext).viewInsets.bottom,
               ),
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(30.0)),
@@ -2222,12 +2238,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                               : "Saved custom URL and IPTV URLs, but backend is offline.",
                                           style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
                                         ),
-                                        backgroundColor: isConnected == true ? primaryColor : const Color(0xFF1E1E24),
+                                        backgroundColor: isConnected == true ? Colors.greenAccent : const Color(0xFF1E1E24),
                                       ),
                                     );
-                                    if (isConnected == true) {
-                                      Navigator.pop(context);
-                                    }
+                                    Navigator.pop(stateContext);
                                   }
                                 },
                                 icon: const Icon(Icons.check_rounded, color: Colors.black),
