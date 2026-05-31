@@ -310,21 +310,26 @@ app.post("/telegram/login/verify", async (req, res) => {
     sessionString = newSessionString;
     tgClient = client;
     
-    // Persist session to .env file automatically
-    const fs = require("fs");
-    const path = require("path");
-    const envPath = path.join(__dirname, "../.env");
-    let envContent = "";
-    if (fs.existsSync(envPath)) {
-      envContent = fs.readFileSync(envPath, "utf8");
+    // Persist session to .env file automatically (only works in local dev environments)
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      const envPath = path.join(__dirname, "../.env");
+      let envContent = "";
+      if (fs.existsSync(envPath)) {
+        envContent = fs.readFileSync(envPath, "utf8");
+      }
+      
+      if (envContent.includes("TELEGRAM_SESSION_STRING=")) {
+        envContent = envContent.replace(/TELEGRAM_SESSION_STRING=.*/, `TELEGRAM_SESSION_STRING="${newSessionString}"`);
+      } else {
+        envContent += `\nTELEGRAM_SESSION_STRING="${newSessionString}"`;
+      }
+      fs.writeFileSync(envPath, envContent, "utf8");
+      console.log("Locally persisted new session string to .env file!");
+    } catch (envWriteErr) {
+      console.warn("WARNING: Could not persist session string to .env file (expected in cloud/Docker environments like Render):", envWriteErr.message);
     }
-    
-    if (envContent.includes("TELEGRAM_SESSION_STRING=")) {
-      envContent = envContent.replace(/TELEGRAM_SESSION_STRING=.*/, `TELEGRAM_SESSION_STRING="${newSessionString}"`);
-    } else {
-      envContent += `\nTELEGRAM_SESSION_STRING="${newSessionString}"`;
-    }
-    fs.writeFileSync(envPath, envContent, "utf8");
     
     // Clean cache
     delete activeLogins[phoneNumber];
