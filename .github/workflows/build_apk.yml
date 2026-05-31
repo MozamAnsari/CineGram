@@ -24,7 +24,9 @@ jobs:
           cache: false
 
       - name: Install Dependencies
-        run: flutter pub get
+        run: |
+          rm -f pubspec.lock
+          flutter pub get
         working-directory: frontend
 
       - name: Build Release APK
