@@ -134,6 +134,9 @@ function getFilenameFromMessage(message) {
     if (msg.match(/\.(mp4|mkv|avi|mov|flv|wmv)$/i)) {
       return msg;
     }
+    if (message.media && (message.media.document || message.media.video || message.file)) {
+      return msg;
+    }
   }
   return null;
 }

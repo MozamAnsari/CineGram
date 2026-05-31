@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import 'package:dio/dio.dart';
 import '../services/api_service.dart';
-import 'profile_select.dart';
+import 'home.dart';
 
 class TelegramLoginScreen extends StatefulWidget {
   const TelegramLoginScreen({Key? key}) : super(key: key);
@@ -163,11 +163,11 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
           _isLoading = false;
         });
 
-        // Navigate to profiles selection with premium transition
+        // Navigate to home screen with premium transition
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
           PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => const ProfileSelectScreen(),
+            pageBuilder: (context, animation, secondaryAnimation) => const HomeScreen(),
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(opacity: animation, child: child);
             },
@@ -533,7 +533,7 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
                           if (!mounted) return;
                           Navigator.of(context).pushReplacement(
                             PageRouteBuilder(
-                              pageBuilder: (context, animation, secondaryAnimation) => const ProfileSelectScreen(),
+                              pageBuilder: (context, animation, secondaryAnimation) => const HomeScreen(),
                               transitionsBuilder: (context, animation, secondaryAnimation, child) {
                                 return FadeTransition(opacity: animation, child: child);
                               },

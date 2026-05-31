@@ -10,7 +10,6 @@ import '../models/media_item.dart';
 import '../widgets/glassmorphic_card.dart';
 import '../services/api_service.dart';
 import 'details.dart';
-import 'profile_select.dart';
 import 'tv_iptv.dart';
 import 'tv_player.dart';
 import '../services/voice_service.dart';
@@ -910,127 +909,9 @@ class _TvHomeScreenState extends State<TvHomeScreenContent> {
   }
 
   Future<bool> _showParentalGate(BuildContext context) async {
-    if (!_isKidsProfileActive) return true; // Direct pass if not Kids Mode
-    
-    final prefs = await SharedPreferences.getInstance();
-    final hasParentPin = prefs.getBool('profile_has_pin_Director') ?? true;
-    final parentPin = prefs.getString('profile_pin_Director') ?? '1234';
-    
-    if (!hasParentPin) return true; // Direct pass if no parent PIN set
-
-    final controller = TextEditingController();
-    bool isCorrect = false;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
-              child: AlertDialog(
-                backgroundColor: const Color(0xFF0F0F12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20.0),
-                  side: const BorderSide(color: Colors.orangeAccent, width: 2.0),
-                ),
-                title: Center(
-                  child: Column(
-                    children: [
-                      const Icon(Icons.security_rounded, color: Colors.orangeAccent, size: 48.0),
-                      const SizedBox(height: 16.0),
-                      Text(
-                         "PARENTAL CONTROL GATE",
-                         style: GoogleFonts.cinzel(
-                           color: Colors.white,
-                           fontWeight: FontWeight.bold,
-                           fontSize: 20.0,
-                           letterSpacing: 1.0,
-                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                content: SizedBox(
-                  width: 400.0,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        "Please enter the Director (Parent) profile 4-digit PIN using your TV remote controller to authorize this action.",
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.plusJakartaSans(color: Colors.white70, fontSize: 14.0, height: 1.4),
-                      ),
-                      const SizedBox(height: 24.0),
-                      Container(
-                        width: 200.0,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(12.0),
-                          border: Border.all(color: Colors.white24, width: 1.5),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: TextField(
-                          controller: controller,
-                          keyboardType: TextInputType.number,
-                          maxLength: 4,
-                          obscureText: true,
-                          textAlign: TextAlign.center,
-                          autofocus: true,
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white, 
-                            fontSize: 24.0, 
-                            fontWeight: FontWeight.bold, 
-                            letterSpacing: 10.0,
-                          ),
-                          decoration: const InputDecoration(
-                            counterText: "",
-                            border: InputBorder.none,
-                            hintText: "••••",
-                            hintStyle: TextStyle(color: Colors.white24, letterSpacing: 5.0),
-                          ),
-                          onChanged: (val) {
-                            if (val.length == 4) {
-                              if (val == parentPin) {
-                                isCorrect = true;
-                                Navigator.pop(context);
-                              } else {
-                                controller.clear();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text("Incorrect Parent PIN. Try again!"),
-                                    backgroundColor: Colors.redAccent,
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      isCorrect = false;
-                      Navigator.pop(context);
-                    },
-                    child: Text(
-                      "CANCEL",
-                      style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-        );
-      }
-    );
-    return isCorrect;
+    return true; // Parental control gate disabled
   }
+
 
   List<MediaItem> _filterKidsContent(List<MediaItem> items) {
     if (!_isKidsProfileActive) return items;
@@ -3099,33 +2980,7 @@ class _TvHomeScreenState extends State<TvHomeScreenContent> {
             _buildSettingDetailRow("Email", "premium.vip@cinegram.io"),
             _buildSettingDetailRow("Device ID", "CINE-TV-4K-99FA"),
             _buildSettingDetailRow("Country", "United States (US)"),
-            const SizedBox(height: 24.0),
-            TvFocusable(
-              onTap: () async {
-                final authorized = await _showParentalGate(context);
-                if (authorized) {
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
-                    (route) => false,
-                  );
-                }
-              },
-              borderRadius: BorderRadius.circular(12.0),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 14.0),
-                color: Theme.of(context).primaryColor,
-                alignment: Alignment.center,
-                child: Text(
-                  "Switch Profile",
-                  style: GoogleFonts.plusJakartaSans(
-                    color: Colors.black,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15.0,
-                  ),
-                ),
-              ),
-            ),
+
           ],
         );
       case 'playback':

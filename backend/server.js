@@ -1574,6 +1574,7 @@ app.get("/telegram/chats", async (req, res) => {
         title: d.title || (d.entity && (d.entity.title || d.entity.username || d.entity.firstName || "Unnamed Chat")),
         isChannel: d.isChannel || false,
         isGroup: d.isGroup || false,
+        isCreator: d.entity && (d.entity.creator || false),
         unreadCount: d.unreadCount || 0
       }));
     res.json({ success: true, chats });
@@ -1627,6 +1628,11 @@ app.post("/telegram/channels", async (req, res) => {
       }
       fs.writeFileSync(envPath, envContent, "utf8");
     }
+
+    // Automatically trigger immediate background library scanning on channels update!
+    runScan(tgClient, supabase).catch(err => {
+      console.error("[Scanner] Background scan launch failed:", err);
+    });
 
     res.json({ success: true, message: "Channel configurations synced successfully." });
   } catch (err) {

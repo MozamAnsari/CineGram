@@ -80,7 +80,7 @@ class ApiService {
       } else {
         baseUrl = _defaultBaseUrl;
       }
-      _activeProfile = prefs.getString(_profileKey);
+      _activeProfile = null;
     } catch (e) {
       developer.log('Error loading base URL from SharedPreferences', error: e, name: 'ApiService');
       baseUrl = _defaultBaseUrl;

@@ -5,8 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 import '../services/api_service.dart';
 import 'home.dart';
-import 'profile_select.dart';
 import 'telegram_login.dart';
+import 'package:dio/dio.dart';
 
 class OnboardingCheckScreen extends StatefulWidget {
   const OnboardingCheckScreen({Key? key}) : super(key: key);
@@ -94,23 +94,47 @@ class _OnboardingCheckScreenState extends State<OnboardingCheckScreen> with Sing
       if (!isLoggedIn) {
         _navigateTo(const TelegramLoginScreen());
       } else {
-        // Telegram is connected! Check multi-profile preferences
-        final prefs = await SharedPreferences.getInstance();
-        final bool multiProfile = prefs.getBool('multi_profile_enabled') ?? true;
-        
-        if (multiProfile) {
-          _navigateTo(const ProfileSelectScreen());
-        } else {
-          // Bypasses profile screen, logs into primary Profile 1 directly
-          final primaryProfile = prefs.getString('profile_name_Profile 1') ?? 'Profile 1';
-          await ApiService.setActiveProfile(primaryProfile);
-          _navigateTo(const HomeScreen());
-        }
+        // Self-Healing Startup Sync: automatically sync local SharedPreferences config to backend
+        _syncSavedChannels();
+        _navigateTo(const HomeScreen());
       }
     } catch (e) {
       // Offline fallback: prompt login setup
       _navigateTo(const TelegramLoginScreen());
     }
+  }
+
+  Future<void> _syncSavedChannels() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final List<String> savedMovies = prefs.getStringList('telegram_channels_movie') ?? [];
+      final List<String> savedTv = prefs.getStringList('telegram_channels_tv') ?? [];
+      final List<String> savedAnime = prefs.getStringList('telegram_channels_anime') ?? [];
+      
+      final List<Map<String, String>> activeChannels = [];
+      for (final id in savedMovies) {
+        activeChannels.add({'id': id, 'type': 'movie', 'name': 'Movies'});
+      }
+      for (final id in savedTv) {
+        activeChannels.add({'id': id, 'type': 'tv', 'name': 'TV Shows'});
+      }
+      for (final id in savedAnime) {
+        activeChannels.add({'id': id, 'type': 'anime', 'name': 'Anime'});
+      }
+      
+      if (activeChannels.isNotEmpty) {
+        final dio = Dio(BaseOptions(
+          baseUrl: ApiService.baseUrl,
+          connectTimeout: const Duration(seconds: 8),
+          receiveTimeout: const Duration(seconds: 8),
+        ));
+        await dio.post(
+          "/telegram/channels",
+          data: {'channels': activeChannels},
+          options: Options(headers: {"Content-Type": "application/json"}),
+        );
+      }
+    } catch (_) {}
   }
 
   void _navigateTo(Widget screen) {
