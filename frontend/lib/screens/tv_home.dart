@@ -439,15 +439,44 @@ class _TvRowState extends State<TvRow> {
   }
 }
 
-// MAIN PREMIUM WIDESCREEN TV-OPTIMIZED HOMEPAGE
-class TvHomeScreen extends StatefulWidget {
+class TvHomeScreen extends StatelessWidget {
   const TvHomeScreen({Key? key}) : super(key: key);
 
   @override
-  State<TvHomeScreen> createState() => _TvHomeScreenState();
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final bool isMobile = size.width < 960;
+    
+    Widget content = const TvHomeScreenContent();
+    
+    if (isMobile) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF070708),
+        body: Center(
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: 1280,
+              height: 720,
+              child: content,
+            ),
+          ),
+        ),
+      );
+    }
+    return content;
+  }
 }
 
-class _TvHomeScreenState extends State<TvHomeScreen> {
+// MAIN PREMIUM WIDESCREEN TV-OPTIMIZED HOMEPAGE
+class TvHomeScreenContent extends StatefulWidget {
+  const TvHomeScreenContent({Key? key}) : super(key: key);
+
+  @override
+  State<TvHomeScreenContent> createState() => _TvHomeScreenState();
+}
+
+class _TvHomeScreenState extends State<TvHomeScreenContent> {
   // Navigation State
   String _activeTab = 'HOME'; // 'HOME' | 'LIVE TV' | 'SEARCH' | 'VAULT' | 'SETTINGS'
   

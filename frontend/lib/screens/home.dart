@@ -15,6 +15,10 @@ import 'package:provider/provider.dart';
 import '../theme/cinegram_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart';
+import 'onboarding_check.dart';
+import 'channel_selector.dart';
+import 'unresolved_queue.dart';
 
 
 class HomeScreen extends StatefulWidget {
@@ -1035,25 +1039,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final Map<String, bool> isKidsMap = {};
     
     final Map<String, TextEditingController> nameControllers = {
-      'Director': TextEditingController(),
-      'Producer': TextEditingController(),
-      'Critic': TextEditingController(),
-      'Viewer': TextEditingController(),
+      'Profile 1': TextEditingController(),
+      'Profile 2': TextEditingController(),
+      'Profile 3': TextEditingController(),
+      'Profile 4': TextEditingController(),
     };
     
     final Map<String, TextEditingController> avatarControllers = {
-      'Director': TextEditingController(),
-      'Producer': TextEditingController(),
-      'Critic': TextEditingController(),
-      'Viewer': TextEditingController(),
+      'Profile 1': TextEditingController(),
+      'Profile 2': TextEditingController(),
+      'Profile 3': TextEditingController(),
+      'Profile 4': TextEditingController(),
     };
 
     final Map<String, TextEditingController> pinControllers = {
-      'Director': TextEditingController(),
-      'Producer': TextEditingController(),
-      'Critic': TextEditingController(),
-      'Viewer': TextEditingController(),
+      'Profile 1': TextEditingController(),
+      'Profile 2': TextEditingController(),
+      'Profile 3': TextEditingController(),
+      'Profile 4': TextEditingController(),
     };
+
+    bool multiProfileEnabled = true;
+    String connectedPhone = "";
 
     bool? isConnected;
     bool isChecking = false;
@@ -1069,14 +1076,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       useExternalPlayer = prefs.getBool('use_external_player') ?? false;
       selectedPlayerPackage = prefs.getString('selected_external_player_package') ?? 'android.intent.action.VIEW';
       selectedPlayerName = prefs.getString('selected_external_player_name') ?? 'System Default Player';
+      multiProfileEnabled = prefs.getBool('multi_profile_enabled') ?? true;
+      connectedPhone = prefs.getString('telegram_phone') ?? "+1 *** *** ****";
       
-      final roles = ['Director', 'Producer', 'Critic', 'Viewer'];
+      final roles = ['Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'];
       for (final role in roles) {
         nameControllers[role]!.text = prefs.getString('profile_name_$role') ?? role;
         avatarControllers[role]!.text = prefs.getString('profile_avatar_$role') ?? '';
-        hasPinMap[role] = prefs.getBool('profile_has_pin_$role') ?? (role == 'Director');
+        hasPinMap[role] = prefs.getBool('profile_has_pin_$role') ?? (role == 'Profile 1');
         pinControllers[role]!.text = prefs.getString('profile_pin_$role') ?? '1234';
-        isKidsMap[role] = prefs.getBool('profile_is_kids_$role') ?? (role == 'Viewer');
+        isKidsMap[role] = prefs.getBool('profile_is_kids_$role') ?? false;
       }
     });
 
@@ -1118,6 +1127,27 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           builder: (stateContext, setSheetState) {
             final themeProvider = Provider.of<ThemeProvider>(stateContext);
             final primaryColor = Theme.of(stateContext).primaryColor;
+
+            Widget buildCategoryHeader(String title, IconData icon, Color color) {
+              return Padding(
+                padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
+                child: Row(
+                  children: [
+                    Icon(icon, color: color, size: 16.0),
+                    const SizedBox(width: 8.0),
+                    Text(
+                      title,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11.0,
+                        fontWeight: FontWeight.w900,
+                        color: color,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
             
             final statusColor = isChecking
                 ? Colors.amber
@@ -1188,1081 +1218,1343 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                        
-                        // Profile Switcher Section
-                        Text(
-                          "CURRENT ACTIVE PROFILE",
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
+                                // CATEGORY 1: TELEGRAM GATEWAY CONNECTION
+                                buildCategoryHeader("TELEGRAM GATEWAY CONNECTION", Icons.telegram_rounded, primaryColor),
+                                const SizedBox(height: 8.0),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
+                                  padding: const EdgeInsets.all(16.0),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.06),
-                                    borderRadius: BorderRadius.circular(8.0),
-                                    border: Border.all(color: Colors.white12),
+                                    color: Colors.white.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
                                   ),
-                                  child: Row(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Icon(Icons.account_circle, color: primaryColor, size: 20),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        ApiService.activeProfile ?? "Viewer",
-                                        style: GoogleFonts.plusJakartaSans(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14.0,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: () async {
-                                Navigator.pop(context); // Close bottom sheet
-                                final authorized = await _showParentalGate(context);
-                                if (authorized) {
-                                  Navigator.of(context).pushAndRemoveUntil(
-                                    MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
-                                    (route) => false,
-                                  );
-                                }
-                              },
-                              icon: const Icon(Icons.swap_horiz, color: Colors.black, size: 18),
-                              label: Text(
-                                "Switch Profile",
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black,
-                                  fontSize: 12.0,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryColor,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10.0),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24.0),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  _showAnalyticsDashboard(context);
-                                },
-                                icon: const Icon(Icons.bar_chart_rounded, color: Colors.black, size: 18),
-                                label: Text(
-                                  "Viewing Stats",
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black,
-                                    fontSize: 12.0,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primaryColor,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10.0),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12.0),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  _showWatchPartyLobby(context);
-                                },
-                                icon: Icon(Icons.groups_rounded, color: primaryColor, size: 18),
-                                label: Text(
-                                  "Co-Watch Room",
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                    fontSize: 12.0,
-                                  ),
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  side: BorderSide(color: primaryColor),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10.0),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 24.0),
-                        const Divider(color: Colors.white12, height: 1.0),
-                        const SizedBox(height: 24.0),
-
-                        // TV Simulator Mode Section
-                        Text(
-                          "TV SIMULATOR MODE",
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          "Experience the widescreen TV dashboard design optimized for remote controls and landscape widescreen viewports.",
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white60,
-                            fontSize: 12.0,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 12.0),
-                        ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(context); // Close bottom sheet
-                            Navigator.push(
-                              context,
-                              PageRouteBuilder(
-                                pageBuilder: (context, animation, secondaryAnimation) => const TvHomeScreen(),
-                                transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                                  return FadeTransition(opacity: animation, child: child);
-                                },
-                              ),
-                            );
-                          },
-                          icon: const Icon(Icons.tv_rounded, color: Colors.black, size: 18),
-                          label: Text(
-                            "Launch Widescreen TV Simulator",
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black,
-                              fontSize: 12.0,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: primaryColor,
-                            minimumSize: const Size(double.infinity, 44),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10.0),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 24.0),
-                        const Divider(color: Colors.white12, height: 1.0),
-                        const SizedBox(height: 24.0),
-
-                        // Theme Switcher Section
-                        Text(
-                          "VISUAL ACCENT THEME",
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          "Select a premium primary accent color preset for customized glows, borders, and visual theme highlighting.",
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white60,
-                            fontSize: 12.0,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 16.0),
-                        
-                        // Custom Circular Chips
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: AccentPreset.values.map((preset) {
-                            final bool isSelected = themeProvider.currentPreset == preset;
-                            return GestureDetector(
-                              onTap: () {
-                                themeProvider.setPreset(preset);
-                                
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      "Visual theme accent changed to ${preset.name}!",
-                                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                    ),
-                                    backgroundColor: preset.color.withOpacity(0.95),
-                                    duration: const Duration(seconds: 2),
-                                  ),
-                                );
-                              },
-                              child: Column(
-                                children: [
-                                  AnimatedContainer(
-                                    duration: const Duration(milliseconds: 250),
-                                    width: 48.0,
-                                    height: 48.0,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: preset.color,
-                                      border: Border.all(
-                                        color: isSelected ? Colors.white : Colors.transparent,
-                                        width: 3.0,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: preset.color.withOpacity(0.4),
-                                          blurRadius: isSelected ? 12.0 : 4.0,
-                                          spreadRadius: isSelected ? 3.0 : 0.0,
-                                        ),
-                                      ],
-                                    ),
-                                    child: isSelected
-                                        ? const Icon(
-                                            Icons.check_rounded,
-                                            color: Colors.black,
-                                            size: 24.0,
-                                          )
-                                        : null,
-                                  ),
-                                  const SizedBox(height: 8.0),
-                                  Text(
-                                    preset.name.split(' ').first,
-                                    style: GoogleFonts.plusJakartaSans(
-                                      color: isSelected ? preset.color : Colors.white60,
-                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                      fontSize: 11.0,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                        const SizedBox(height: 20.0),
-                        
-                        // CUSTOM ACCENT HEX INPUT ROW
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.04),
-                                  borderRadius: BorderRadius.circular(12.0),
-                                  border: Border.all(color: Colors.white12),
-                                ),
-                                padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 2.0),
-                                child: TextField(
-                                  controller: hexColorController,
-                                  style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
-                                  onChanged: (val) {
-                                    setSheetState(() {});
-                                  },
-                                  decoration: InputDecoration(
-                                    labelText: "Custom Color Hex",
-                                    labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
-                                    hintText: "e.g., #FF2E93 or F57C00",
-                                    hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
-                                    border: InputBorder.none,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12.0),
-                            // Realtime Glowing Preview Circle & Save Button
-                            GestureDetector(
-                              onTap: () async {
-                                final hex = hexColorController.text.trim();
-                                if (hex.isNotEmpty) {
-                                  final success = await themeProvider.setCustomHexColor(hex);
-                                  if (success) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          "Custom accent color set successfully!",
-                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                        ),
-                                        backgroundColor: themeProvider.accentColor,
-                                        duration: const Duration(seconds: 2),
-                                      ),
-                                    );
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text("Invalid Hex color format. Use #RRGGBB"),
-                                        backgroundColor: Colors.redAccent,
-                                      ),
-                                    );
-                                  }
-                                } else {
-                                  await themeProvider.clearCustomColor();
-                                }
-                                setSheetState(() {});
-                              },
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 250),
-                                width: 44.0,
-                                height: 44.0,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor,
-                                  border: Border.all(color: Colors.white24, width: 1.5),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: (ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor).withOpacity(0.4),
-                                      blurRadius: 10.0,
-                                      spreadRadius: 2.0,
-                                    ),
-                                  ],
-                                ),
-                                child: const Icon(Icons.colorize_rounded, color: Colors.black, size: 20.0),
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 24.0),
-                        const Divider(color: Colors.white12, height: 1.0),
-                        const SizedBox(height: 24.0),
-
-                        // PROFILE AVATARS & DETAILS SECTION
-                        Text(
-                          "PROFILE AVATARS & DETAILS",
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          "Customize profile names and avatar photo URLs (Unsplash links supported). Leave avatar blank to reset to defaults.",
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white60,
-                            fontSize: 12.0,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 16.0),
-
-                        Column(
-                          children: ['Director', 'Producer', 'Critic', 'Viewer'].map((role) {
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 12.0),
-                              padding: const EdgeInsets.all(12.0),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.02),
-                                borderRadius: BorderRadius.circular(14.0),
-                                border: Border.all(color: Colors.white.withOpacity(0.06)),
-                              ),
-                              child: Row(
-                                children: [
-                                  // Miniature preview thumbnail
-                                  Container(
-                                    width: 44.0,
-                                    height: 44.0,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: primaryColor.withOpacity(0.4), width: 1.5),
-                                      image: DecorationImage(
-                                        image: CachedNetworkImageProvider(
-                                          avatarControllers[role]!.text.trim().isNotEmpty
-                                              ? avatarControllers[role]!.text.trim()
-                                              : (role == 'Director'
-                                                  ? 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150'
-                                                  : role == 'Producer'
-                                                      ? 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?q=80&w=150'
-                                                      : role == 'Critic'
-                                                          ? 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=150'
-                                                          : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150'),
-                                        ),
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12.0),
-                                  Expanded(
-                                    child: Column(
-                                      children: [
-                                        // Name Input
-                                        Container(
-                                          height: 32.0,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white.withOpacity(0.03),
-                                            borderRadius: BorderRadius.circular(8.0),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                                          child: TextField(
-                                            controller: nameControllers[role],
-                                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0),
-                                            decoration: InputDecoration(
-                                              hintText: "Profile Name ($role)",
-                                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 12.0),
-                                              border: InputBorder.none,
-                                              contentPadding: const EdgeInsets.only(bottom: 14.0),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 6.0),
-                                        // Avatar URL Input
-                                        Container(
-                                          height: 32.0,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white.withOpacity(0.03),
-                                            borderRadius: BorderRadius.circular(8.0),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                                          child: TextField(
-                                            controller: avatarControllers[role],
-                                            style: GoogleFonts.plusJakartaSans(color: Colors.white70, fontSize: 11.5),
-                                            onChanged: (val) {
-                                              setSheetState(() {});
-                                            },
-                                            decoration: InputDecoration(
-                                              hintText: "Avatar URL for $role",
-                                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 11.0),
-                                              border: InputBorder.none,
-                                              contentPadding: const EdgeInsets.only(bottom: 15.0),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8.0),
-                                        // Dynamic security parameters row
-                                        Row(
-                                          children: [
-                                            Text(
-                                              "KIDS:",
-                                              style: GoogleFonts.plusJakartaSans(
-                                                color: Colors.white38,
-                                                fontSize: 9.5,
-                                                fontWeight: FontWeight.bold,
-                                                letterSpacing: 0.5,
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Container(
+                                                padding: const EdgeInsets.all(10.0),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.blueAccent.withOpacity(0.1),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: const Icon(Icons.phone_android_rounded, color: Colors.blueAccent, size: 20.0),
                                               ),
-                                            ),
-                                            const SizedBox(width: 4.0),
-                                            SizedBox(
-                                              height: 18.0,
-                                              width: 28.0,
-                                              child: Switch(
-                                                value: isKidsMap[role] ?? false,
-                                                activeColor: Colors.orangeAccent,
-                                                onChanged: (val) {
-                                                  setSheetState(() {
-                                                    isKidsMap[role] = val;
-                                                  });
-                                                },
-                                              ),
-                                            ),
-                                            const SizedBox(width: 12.0),
-                                            Text(
-                                              "LOCK:",
-                                              style: GoogleFonts.plusJakartaSans(
-                                                color: Colors.white38,
-                                                fontSize: 9.5,
-                                                fontWeight: FontWeight.bold,
-                                                letterSpacing: 0.5,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 4.0),
-                                            SizedBox(
-                                              height: 18.0,
-                                              width: 28.0,
-                                              child: Switch(
-                                                value: hasPinMap[role] ?? false,
-                                                activeColor: primaryColor,
-                                                onChanged: (val) {
-                                                  setSheetState(() {
-                                                    hasPinMap[role] = val;
-                                                  });
-                                                },
-                                              ),
-                                            ),
-                                            const SizedBox(width: 8.0),
-                                            if (hasPinMap[role] == true)
-                                              Expanded(
-                                                child: Container(
-                                                  height: 24.0,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white.withOpacity(0.04),
-                                                    borderRadius: BorderRadius.circular(6.0),
-                                                    border: Border.all(color: Colors.white12),
-                                                  ),
-                                                  padding: const EdgeInsets.symmetric(horizontal: 6.0),
-                                                  child: TextField(
-                                                    controller: pinControllers[role],
-                                                    keyboardType: TextInputType.number,
-                                                    maxLength: 4,
-                                                    obscureText: true,
-                                                    style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 11.0),
-                                                    decoration: const InputDecoration(
-                                                      hintText: "4-Digit PIN",
-                                                      counterText: "",
-                                                      border: InputBorder.none,
-                                                      contentPadding: EdgeInsets.only(bottom: 15.0),
+                                              const SizedBox(width: 12.0),
+                                              Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    "CONNECTED NUMBER",
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: Colors.white38,
+                                                      fontSize: 10.0,
+                                                      fontWeight: FontWeight.bold,
                                                     ),
                                                   ),
-                                                ),
+                                                  const SizedBox(height: 2.0),
+                                                  Text(
+                                                    connectedPhone.isNotEmpty ? connectedPhone : "Active Gateway Session",
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: Colors.white,
+                                                      fontSize: 14.0,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                        ),
-
-                        const SizedBox(height: 24.0),
-                        const Divider(color: Colors.white12, height: 1.0),
-                        const SizedBox(height: 24.0),
-
-                        Text(
-                          "SERVER CONFIG",
-                          style: GoogleFonts.cinzel(
-                            fontSize: 18.0,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                            letterSpacing: 1.5,
-                          ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          "Enter a custom server URL to synchronize listings and progress across all devices in real-time.",
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white60,
-                            fontSize: 13.0,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 24.0),
-
-                        // Glowing Connectivity status row
-                        GestureDetector(
-                          onTap: () => checkConnection(setSheetState, urlController.text),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
-                            decoration: BoxDecoration(
-                              color: statusColor.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(12.0),
-                              border: Border.all(color: statusColor.withOpacity(0.3), width: 0.8),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Glowing dot
-                                AnimatedContainer(
-                                  duration: const Duration(milliseconds: 300),
-                                  width: 10.0,
-                                  height: 10.0,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: statusColor,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: statusColor.withOpacity(0.6),
-                                        blurRadius: 8.0,
-                                        spreadRadius: 2.0,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 10.0),
-                                Text(
-                                  statusText,
-                                  style: GoogleFonts.plusJakartaSans(
-                                    color: statusColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12.0,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 20.0),
-
-                        // Input field
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(14.0),
-                            border: Border.all(color: Colors.white12),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                          child: TextField(
-                            controller: urlController,
-                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 15.0),
-                            decoration: InputDecoration(
-                              labelText: "API Gateway Base URL",
-                              labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
-                              hintText: "e.g., https://your-server.render.com",
-                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
-                              border: InputBorder.none,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 24.0),
-                        const Divider(color: Colors.white12, height: 1.0),
-                        const SizedBox(height: 24.0),
-
-                        // EXTERNAL VIDEO PLAYER CONFIGURATION
-                        Text(
-                          "EXTERNAL VIDEO PLAYER CONFIGURATION",
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.bold,
-                            color: primaryColor,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          "Enable external player mapping to stream or play digital prints directly inside apps like VLC, MX Player, or Kodi.",
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white60,
-                            fontSize: 12.0,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 16.0),
-                        
-                        // Switch Tile for enable/disable
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(14.0),
-                            border: Border.all(color: Colors.white12),
-                          ),
-                          child: SwitchListTile(
-                            activeColor: primaryColor,
-                            title: Text(
-                              "Always Use External Player",
-                              style: GoogleFonts.plusJakartaSans(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14.0,
-                              ),
-                            ),
-                            subtitle: Text(
-                              "Bypasses the built-in Cinegram mobile playback engine.",
-                              style: GoogleFonts.plusJakartaSans(
-                                color: Colors.white38,
-                                fontSize: 11.0,
-                              ),
-                            ),
-                            value: useExternalPlayer,
-                            onChanged: (val) {
-                              setSheetState(() {
-                                useExternalPlayer = val;
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(height: 12.0),
-
-                        // Selector Button for Default Player
-                        InkWell(
-                          onTap: () {
-                            showModalBottomSheet(
-                              context: context,
-                              backgroundColor: Colors.transparent,
-                              barrierColor: Colors.black.withOpacity(0.5),
-                              builder: (dialogContext) {
-                                return FutureBuilder<List<Map<String, String>>>(
-                                  future: ExternalPlayerService.detectPlayers(),
-                                  builder: (context, snapshot) {
-                                    final players = snapshot.data ?? [];
-                                    final isLoading = snapshot.connectionState == ConnectionState.waiting;
-
-                                    return ClipRRect(
-                                      borderRadius: const BorderRadius.vertical(top: Radius.circular(24.0)),
-                                      child: BackdropFilter(
-                                        filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF0F0F12).withOpacity(0.95),
-                                            border: Border(
-                                              top: BorderSide(color: Colors.white.withOpacity(0.08), width: 1.0),
-                                            ),
+                                            ],
                                           ),
-                                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Center(
-                                                child: Container(
-                                                  width: 36.0,
-                                                  height: 4.0,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white24,
-                                                    borderRadius: BorderRadius.circular(10.0),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
+                                            decoration: BoxDecoration(
+                                              color: Colors.greenAccent.withOpacity(0.1),
+                                              borderRadius: BorderRadius.circular(8.0),
+                                              border: Border.all(color: Colors.greenAccent.withOpacity(0.2)),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Container(
+                                                  width: 6.0,
+                                                  height: 6.0,
+                                                  decoration: const BoxDecoration(
+                                                    color: Colors.greenAccent,
+                                                    shape: BoxShape.circle,
                                                   ),
                                                 ),
-                                              ),
-                                              const SizedBox(height: 20.0),
-                                              Text(
-                                                "SELECT VIDEO PLAYER",
-                                                style: GoogleFonts.cinzel(
-                                                  fontSize: 18.0,
-                                                  fontWeight: FontWeight.w900,
-                                                  color: Colors.white,
-                                                  letterSpacing: 1.0,
+                                                const SizedBox(width: 6.0),
+                                                Text(
+                                                  "ONLINE",
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    color: Colors.greenAccent,
+                                                    fontSize: 10.0,
+                                                    fontWeight: FontWeight.w900,
+                                                    letterSpacing: 0.5,
+                                                  ),
                                                 ),
-                                              ),
-                                              const SizedBox(height: 4.0),
-                                              Text(
-                                                "Choose your preferred external media engine for mobile video streams.",
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 20.0),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: ElevatedButton.icon(
+                                              onPressed: () {
+                                                Navigator.pop(context);
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(builder: (context) => const ChannelSelectorScreen()),
+                                                );
+                                              },
+                                              icon: const Icon(Icons.campaign_rounded, color: Colors.black, size: 16),
+                                              label: Text(
+                                                "Library Chats",
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                                 style: GoogleFonts.plusJakartaSans(
-                                                  color: Colors.white54,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.black,
                                                   fontSize: 11.5,
                                                 ),
                                               ),
-                                              const SizedBox(height: 16.0),
-                                              if (isLoading)
-                                                const Center(
-                                                  child: Padding(
-                                                    padding: EdgeInsets.symmetric(vertical: 32.0),
-                                                    child: CircularProgressIndicator(strokeWidth: 2.0),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: primaryColor,
+                                                padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(10.0),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10.0),
+                                          Expanded(
+                                            child: OutlinedButton.icon(
+                                              onPressed: () {
+                                                Navigator.pop(context);
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(builder: (context) => const UnresolvedQueueScreen()),
+                                                );
+                                              },
+                                              icon: Icon(Icons.movie_filter_rounded, color: primaryColor, size: 16),
+                                              label: Text(
+                                                "Fix Matches",
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                  fontSize: 11.5,
+                                                ),
+                                              ),
+                                              style: OutlinedButton.styleFrom(
+                                                side: BorderSide(color: primaryColor, width: 1.0),
+                                                padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(10.0),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: OutlinedButton.icon(
+                                          onPressed: () async {
+                                            final confirm = await showDialog<bool>(
+                                              context: context,
+                                              builder: (dialogCtx) => AlertDialog(
+                                                backgroundColor: const Color(0xFF0F0F12),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(16.0),
+                                                  side: BorderSide(color: Colors.white.withOpacity(0.1)),
+                                                ),
+                                                title: Text(
+                                                  "Disconnect Gateway?",
+                                                  style: GoogleFonts.cinzel(color: Colors.white, fontWeight: FontWeight.bold),
+                                                ),
+                                                content: Text(
+                                                  "Are you sure you want to log out and disconnect your Telegram account from Cinegram?",
+                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white70),
+                                                ),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () => Navigator.pop(dialogCtx, false),
+                                                    child: Text("Cancel", style: GoogleFonts.plusJakartaSans(color: Colors.white38)),
                                                   ),
-                                                )
-                                              else if (players.isEmpty)
-                                                Padding(
-                                                  padding: const EdgeInsets.symmetric(vertical: 24.0),
-                                                  child: Text(
-                                                    "No external media players detected.",
-                                                    style: GoogleFonts.plusJakartaSans(color: Colors.white38),
+                                                  ElevatedButton(
+                                                    onPressed: () => Navigator.pop(dialogCtx, true),
+                                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                                    child: Text("Disconnect", style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
                                                   ),
-                                                )
-                                              else
-                                                ConstrainedBox(
-                                                  constraints: BoxConstraints(
-                                                    maxHeight: MediaQuery.of(context).size.height * 0.4,
+                                                ],
+                                              ),
+                                            );
+
+                                            if (confirm == true) {
+                                              setSheetState(() {
+                                                isChecking = true;
+                                              });
+                                              try {
+                                                await Dio().post(
+                                                  "${ApiService.baseUrl}/telegram/logout",
+                                                  options: Options(headers: {"Content-Type": "application/json"}),
+                                                );
+                                                
+                                                final prefs = await SharedPreferences.getInstance();
+                                                await prefs.setBool('telegram_logged_in', false);
+                                                await prefs.remove('telegram_session_string_cache');
+                                                await prefs.remove('telegram_phone');
+                                                
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(context).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        "Telegram Gateway disconnected successfully.",
+                                                        style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                      ),
+                                                      backgroundColor: Colors.greenAccent,
+                                                    ),
+                                                  );
+                                                  Navigator.pop(stateContext);
+                                                  Navigator.of(context).pushAndRemoveUntil(
+                                                    MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
+                                                    (route) => false,
+                                                  );
+                                                }
+                                              } catch (e) {
+                                                final prefs = await SharedPreferences.getInstance();
+                                                await prefs.setBool('telegram_logged_in', false);
+                                                await prefs.remove('telegram_session_string_cache');
+                                                await prefs.remove('telegram_phone');
+                                                
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(context).showSnackBar(
+                                                    const SnackBar(
+                                                      content: Text("Error disconnecting remote session. Session cleared locally."),
+                                                      backgroundColor: Colors.orangeAccent,
+                                                    ),
+                                                  );
+                                                  Navigator.pop(stateContext);
+                                                  Navigator.of(context).pushAndRemoveUntil(
+                                                    MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
+                                                    (route) => false,
+                                                  );
+                                                }
+                                              }
+                                            }
+                                          },
+                                          icon: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 18),
+                                          label: Text(
+                                            "Disconnect Telegram Gateway",
+                                            style: GoogleFonts.plusJakartaSans(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.redAccent,
+                                              fontSize: 12.0,
+                                            ),
+                                          ),
+                                          style: OutlinedButton.styleFrom(
+                                            side: const BorderSide(color: Colors.redAccent, width: 1.2),
+                                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(12.0),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 24.0),
+
+                                // CATEGORY 2: DYNAMIC PROFILES & SECURITY
+                                buildCategoryHeader("DYNAMIC PROFILES & SECURITY", Icons.people_outline_rounded, primaryColor),
+                                const SizedBox(height: 8.0),
+                                Container(
+                                  padding: const EdgeInsets.all(16.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                "CURRENT ACTIVE PROFILE",
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontSize: 10.0,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white38,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4.0),
+                                              Row(
+                                                children: [
+                                                  Icon(Icons.account_circle, color: primaryColor, size: 18),
+                                                  const SizedBox(width: 6),
+                                                  Text(
+                                                    ApiService.activeProfile ?? "Profile 1",
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: Colors.white,
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 14.0,
+                                                    ),
                                                   ),
-                                                  child: ListView.builder(
-                                                    shrinkWrap: true,
-                                                    itemCount: players.length,
-                                                    itemBuilder: (context, index) {
-                                                      final p = players[index];
-                                                      final name = p['name'] ?? 'Unknown Player';
-                                                      final package = p['package'] ?? '';
-                                                      final isSelected = selectedPlayerPackage == package;
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                          ElevatedButton.icon(
+                                            onPressed: () async {
+                                              Navigator.pop(context);
+                                              final authorized = await _showParentalGate(context);
+                                              if (authorized) {
+                                                Navigator.of(context).pushAndRemoveUntil(
+                                                  MaterialPageRoute(builder: (context) => const ProfileSelectScreen()),
+                                                  (route) => false,
+                                                );
+                                              }
+                                            },
+                                            icon: const Icon(Icons.swap_horiz, color: Colors.black, size: 16),
+                                            label: Text(
+                                              "Switch Profile",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.black,
+                                                fontSize: 12.0,
+                                              ),
+                                            ),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: primaryColor,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(10.0),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12.0),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: ElevatedButton.icon(
+                                              onPressed: () {
+                                                Navigator.pop(context);
+                                                _showAnalyticsDashboard(context);
+                                              },
+                                              icon: const Icon(Icons.bar_chart_rounded, color: Colors.black, size: 18),
+                                              label: Text(
+                                                "Viewing Stats",
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.black,
+                                                  fontSize: 12.0,
+                                                ),
+                                              ),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: primaryColor,
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(10.0),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12.0),
+                                          Expanded(
+                                            child: OutlinedButton.icon(
+                                              onPressed: () {
+                                                Navigator.pop(context);
+                                                _showWatchPartyLobby(context);
+                                              },
+                                              icon: Icon(Icons.groups_rounded, color: primaryColor, size: 18),
+                                              label: Text(
+                                                "Co-Watch Room",
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                  fontSize: 12.0,
+                                                ),
+                                              ),
+                                              style: OutlinedButton.styleFrom(
+                                                side: BorderSide(color: primaryColor),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(10.0),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      const Divider(color: Colors.white12, height: 1.0),
+                                      const SizedBox(height: 16.0),
 
-                                                      IconData pIcon = Icons.play_circle_outline_rounded;
-                                                      Color pIconColor = Colors.white60;
+                                      SwitchListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        activeColor: primaryColor,
+                                        title: Text(
+                                          "Multi-Profile Mode",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13.0,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          "Enable multiple profile choices on app startup. If disabled, defaults to primary Profile directly.",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: Colors.white38,
+                                            fontSize: 11.0,
+                                            height: 1.3,
+                                          ),
+                                        ),
+                                        value: multiProfileEnabled,
+                                        onChanged: (val) {
+                                          setSheetState(() {
+                                            multiProfileEnabled = val;
+                                          });
+                                        },
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      const Divider(color: Colors.white12, height: 1.0),
+                                      const SizedBox(height: 16.0),
 
-                                                      if (package.contains("vlc")) {
-                                                        pIcon = Icons.play_circle_filled_rounded;
-                                                        pIconColor = Colors.orangeAccent;
-                                                      } else if (package.contains("mxtech")) {
-                                                        pIcon = Icons.play_circle_filled_rounded;
-                                                        pIconColor = Colors.blueAccent;
-                                                      } else if (package.contains("nova")) {
-                                                        pIcon = Icons.play_circle_filled_rounded;
-                                                        pIconColor = Colors.greenAccent;
-                                                      } else if (package.contains("kodi")) {
-                                                        pIcon = Icons.dashboard_rounded;
-                                                        pIconColor = Colors.cyanAccent;
-                                                      }
+                                      Text(
+                                        "CUSTOM PROFILE SLOTS",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 10.0,
+                                          fontWeight: FontWeight.bold,
+                                          color: primaryColor,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12.0),
 
-                                                      return Container(
-                                                        margin: const EdgeInsets.only(bottom: 8.0),
-                                                        decoration: BoxDecoration(
-                                                          color: isSelected 
-                                                              ? primaryColor.withOpacity(0.06) 
-                                                              : Colors.white.withOpacity(0.02),
-                                                          borderRadius: BorderRadius.circular(12.0),
-                                                          border: Border.all(
-                                                            color: isSelected 
-                                                                ? primaryColor.withOpacity(0.3) 
-                                                                : Colors.white.withOpacity(0.05),
-                                                          ),
-                                                        ),
-                                                        child: ListTile(
-                                                          leading: Icon(pIcon, color: pIconColor),
-                                                          title: Text(
-                                                            name,
-                                                            style: GoogleFonts.plusJakartaSans(
-                                                              color: Colors.white,
-                                                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                                            ),
-                                                          ),
-                                                          subtitle: Text(
-                                                            package,
-                                                            style: GoogleFonts.plusJakartaSans(
-                                                              color: Colors.white30,
-                                                              fontSize: 10.0,
-                                                            ),
-                                                          ),
-                                                          trailing: isSelected
-                                                              ? Icon(Icons.check_circle_rounded, color: primaryColor)
-                                                              : null,
-                                                          onTap: () {
-                                                            setSheetState(() {
-                                                              selectedPlayerPackage = package;
-                                                              selectedPlayerName = name;
-                                                            });
-                                                            Navigator.pop(dialogContext);
-                                                          },
-                                                        ),
-                                                      );
-                                                    },
+                                      Column(
+                                        children: ['Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'].map((role) {
+                                          return Container(
+                                            margin: const EdgeInsets.only(bottom: 12.0),
+                                            padding: const EdgeInsets.all(12.0),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white.withOpacity(0.01),
+                                              borderRadius: BorderRadius.circular(14.0),
+                                              border: Border.all(color: Colors.white.withOpacity(0.04)),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Container(
+                                                  width: 44.0,
+                                                  height: 44.0,
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(color: primaryColor.withOpacity(0.4), width: 1.5),
+                                                    image: DecorationImage(
+                                                      image: CachedNetworkImageProvider(
+                                                        avatarControllers[role]!.text.trim().isNotEmpty
+                                                            ? avatarControllers[role]!.text.trim()
+                                                            : (role == 'Profile 1'
+                                                                ? 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150'
+                                                                : role == 'Profile 2'
+                                                                    ? 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?q=80&w=150'
+                                                                    : role == 'Profile 3'
+                                                                        ? 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=150'
+                                                                        : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150'),
+                                                      ),
+                                                      fit: BoxFit.cover,
+                                                    ),
                                                   ),
                                                 ),
+                                                const SizedBox(width: 12.0),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      Container(
+                                                        height: 32.0,
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.white.withOpacity(0.03),
+                                                          borderRadius: BorderRadius.circular(8.0),
+                                                        ),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                                                        child: TextField(
+                                                          controller: nameControllers[role],
+                                                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0),
+                                                          decoration: InputDecoration(
+                                                            hintText: "Profile Name ($role)",
+                                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 12.0),
+                                                            border: InputBorder.none,
+                                                            contentPadding: const EdgeInsets.only(bottom: 14.0),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 6.0),
+                                                      Container(
+                                                        height: 32.0,
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.white.withOpacity(0.03),
+                                                          borderRadius: BorderRadius.circular(8.0),
+                                                        ),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                                                        child: TextField(
+                                                          controller: avatarControllers[role],
+                                                          style: GoogleFonts.plusJakartaSans(color: Colors.white70, fontSize: 11.5),
+                                                          onChanged: (val) {
+                                                            setSheetState(() {});
+                                                          },
+                                                          decoration: InputDecoration(
+                                                            hintText: "Avatar URL for $role",
+                                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 11.0),
+                                                            border: InputBorder.none,
+                                                            contentPadding: const EdgeInsets.only(bottom: 15.0),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(height: 8.0),
+                                                      Row(
+                                                        children: [
+                                                          Text(
+                                                            "KIDS:",
+                                                            style: GoogleFonts.plusJakartaSans(
+                                                              color: Colors.white38,
+                                                              fontSize: 9.5,
+                                                              fontWeight: FontWeight.bold,
+                                                              letterSpacing: 0.5,
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 4.0),
+                                                          SizedBox(
+                                                            height: 18.0,
+                                                            width: 28.0,
+                                                            child: Switch(
+                                                              value: isKidsMap[role] ?? false,
+                                                              activeColor: Colors.orangeAccent,
+                                                              onChanged: (val) {
+                                                                setSheetState(() {
+                                                                  isKidsMap[role] = val;
+                                                                });
+                                                              },
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 12.0),
+                                                          Text(
+                                                            "LOCK PIN:",
+                                                            style: GoogleFonts.plusJakartaSans(
+                                                              color: Colors.white38,
+                                                              fontSize: 9.5,
+                                                              fontWeight: FontWeight.bold,
+                                                              letterSpacing: 0.5,
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 4.0),
+                                                          SizedBox(
+                                                            height: 18.0,
+                                                            width: 28.0,
+                                                            child: Switch(
+                                                              value: hasPinMap[role] ?? false,
+                                                              activeColor: primaryColor,
+                                                              onChanged: (val) {
+                                                                setSheetState(() {
+                                                                  hasPinMap[role] = val;
+                                                                });
+                                                              },
+                                                            ),
+                                                          ),
+                                                          const SizedBox(width: 8.0),
+                                                          if (hasPinMap[role] == true)
+                                                            Expanded(
+                                                              child: Container(
+                                                                height: 24.0,
+                                                                decoration: BoxDecoration(
+                                                                  color: Colors.white.withOpacity(0.04),
+                                                                  borderRadius: BorderRadius.circular(6.0),
+                                                                  border: Border.all(color: Colors.white12),
+                                                                ),
+                                                                padding: const EdgeInsets.symmetric(horizontal: 6.0),
+                                                                child: TextField(
+                                                                  controller: pinControllers[role],
+                                                                  keyboardType: TextInputType.number,
+                                                                  maxLength: 4,
+                                                                  obscureText: true,
+                                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 11.0),
+                                                                  decoration: const InputDecoration(
+                                                                    hintText: "PIN (4-digits)",
+                                                                    counterText: "",
+                                                                    border: InputBorder.none,
+                                                                    contentPadding: EdgeInsets.only(bottom: 15.0),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                        ],
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        }).toList(),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 24.0),
+
+                                // CATEGORY 3: TV SIMULATOR & DASHBOARD
+                                buildCategoryHeader("TV SIMULATOR & DASHBOARD", Icons.tv_rounded, primaryColor),
+                                const SizedBox(height: 8.0),
+                                Container(
+                                  padding: const EdgeInsets.all(16.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Experience the premium, D-pad remote optimized widescreen dashboard design scaled dynamically for mobile handsets.",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          color: Colors.white60,
+                                          fontSize: 12.0,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      ElevatedButton.icon(
+                                        onPressed: () {
+                                          Navigator.pop(context);
+                                          Navigator.push(
+                                            context,
+                                            PageRouteBuilder(
+                                              pageBuilder: (context, animation, secondaryAnimation) => const TvHomeScreen(),
+                                              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                                return FadeTransition(opacity: animation, child: child);
+                                              },
+                                            ),
+                                          );
+                                        },
+                                        icon: const Icon(Icons.tv_rounded, color: Colors.black, size: 18),
+                                        label: Text(
+                                          "Launch Widescreen TV Simulator",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.black,
+                                            fontSize: 12.0,
+                                          ),
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: primaryColor,
+                                          minimumSize: const Size(double.infinity, 44),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(10.0),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 24.0),
+
+                                // CATEGORY 4: VISUAL ACCENT THEME
+                                buildCategoryHeader("VISUAL ACCENT THEME", Icons.palette_outlined, primaryColor),
+                                const SizedBox(height: 8.0),
+                                Container(
+                                  padding: const EdgeInsets.all(16.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Select a premium primary accent color preset or enter a custom hex color code for customized glows, interfaces, and borders.",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          color: Colors.white60,
+                                          fontSize: 12.0,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                        children: AccentPreset.values.map((preset) {
+                                          final bool isSelected = themeProvider.currentPreset == preset;
+                                          return GestureDetector(
+                                            onTap: () {
+                                              themeProvider.setPreset(preset);
+                                              
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    "Visual theme accent changed to ${preset.name}!",
+                                                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                  ),
+                                                  backgroundColor: preset.color.withOpacity(0.95),
+                                                  duration: const Duration(seconds: 2),
+                                                ),
+                                              );
+                                            },
+                                            child: Column(
+                                              children: [
+                                                AnimatedContainer(
+                                                  duration: const Duration(milliseconds: 250),
+                                                  width: 44.0,
+                                                  height: 44.0,
+                                                  decoration: BoxDecoration(
+                                                    shape: BoxShape.circle,
+                                                    color: preset.color,
+                                                    border: Border.all(
+                                                      color: isSelected ? Colors.white : Colors.transparent,
+                                                      width: 3.0,
+                                                    ),
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: preset.color.withOpacity(0.4),
+                                                        blurRadius: isSelected ? 12.0 : 4.0,
+                                                        spreadRadius: isSelected ? 3.0 : 0.0,
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  child: isSelected
+                                                      ? const Icon(
+                                                          Icons.check_rounded,
+                                                          color: Colors.black,
+                                                          size: 20.0,
+                                                        )
+                                                      : null,
+                                                ),
+                                                const SizedBox(height: 6.0),
+                                                Text(
+                                                  preset.name.split(' ').first,
+                                                  style: GoogleFonts.plusJakartaSans(
+                                                    color: isSelected ? preset.color : Colors.white60,
+                                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                                    fontSize: 10.0,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        }).toList(),
+                                      ),
+                                      const SizedBox(height: 20.0),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                color: Colors.white.withOpacity(0.04),
+                                                borderRadius: BorderRadius.circular(12.0),
+                                                border: Border.all(color: Colors.white12),
+                                              ),
+                                              padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 2.0),
+                                              child: TextField(
+                                                controller: hexColorController,
+                                                style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0),
+                                                onChanged: (val) {
+                                                  setSheetState(() {});
+                                                },
+                                                decoration: InputDecoration(
+                                                  labelText: "Custom Color Hex",
+                                                  labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 11.0),
+                                                  hintText: "e.g., #FF2E93",
+                                                  hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 12.0),
+                                                  border: InputBorder.none,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12.0),
+                                          GestureDetector(
+                                            onTap: () async {
+                                              final hex = hexColorController.text.trim();
+                                              if (hex.isNotEmpty) {
+                                                final success = await themeProvider.setCustomHexColor(hex);
+                                                if (success) {
+                                                  ScaffoldMessenger.of(context).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(
+                                                        "Custom accent color set successfully!",
+                                                        style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                      ),
+                                                      backgroundColor: themeProvider.accentColor,
+                                                      duration: const Duration(seconds: 2),
+                                                    ),
+                                                  );
+                                                } else {
+                                                  ScaffoldMessenger.of(context).showSnackBar(
+                                                    const SnackBar(
+                                                      content: Text("Invalid Hex color format. Use #RRGGBB"),
+                                                      backgroundColor: Colors.redAccent,
+                                                    ),
+                                                  );
+                                                }
+                                              } else {
+                                                await themeProvider.clearCustomColor();
+                                              }
+                                              setSheetState(() {});
+                                            },
+                                            child: AnimatedContainer(
+                                              duration: const Duration(milliseconds: 250),
+                                              width: 44.0,
+                                              height: 44.0,
+                                              decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor,
+                                                border: Border.all(color: Colors.white24, width: 1.5),
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: (ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor).withOpacity(0.4),
+                                                    blurRadius: 10.0,
+                                                    spreadRadius: 2.0,
+                                                  ),
+                                                ],
+                                              ),
+                                              child: const Icon(Icons.colorize_rounded, color: Colors.black, size: 20.0),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 24.0),
+
+                                // CATEGORY 5: VIDEO PLAYBACK PREFERENCES
+                                buildCategoryHeader("VIDEO PLAYBACK PREFERENCES", Icons.play_circle_outline_rounded, primaryColor),
+                                const SizedBox(height: 8.0),
+                                Container(
+                                  padding: const EdgeInsets.all(16.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.04),
+                                          borderRadius: BorderRadius.circular(14.0),
+                                          border: Border.all(color: Colors.white12),
+                                        ),
+                                        child: SwitchListTile(
+                                          activeColor: primaryColor,
+                                          title: Text(
+                                            "Always Use External Player",
+                                            style: GoogleFonts.plusJakartaSans(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13.0,
+                                            ),
+                                          ),
+                                          subtitle: Text(
+                                            "Bypasses the built-in player to stream using VLC, MX Player, Nova, or Kodi.",
+                                            style: GoogleFonts.plusJakartaSans(
+                                              color: Colors.white38,
+                                              fontSize: 11.0,
+                                            ),
+                                          ),
+                                          value: useExternalPlayer,
+                                          onChanged: (val) {
+                                            setSheetState(() {
+                                              useExternalPlayer = val;
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12.0),
+                                      InkWell(
+                                        onTap: () {
+                                          showModalBottomSheet(
+                                            context: context,
+                                            backgroundColor: Colors.transparent,
+                                            barrierColor: Colors.black.withOpacity(0.5),
+                                            builder: (dialogContext) {
+                                              return FutureBuilder<List<Map<String, String>>>(
+                                                future: ExternalPlayerService.detectPlayers(),
+                                                builder: (context, snapshot) {
+                                                  final players = snapshot.data ?? [];
+                                                  final isLoading = snapshot.connectionState == ConnectionState.waiting;
+
+                                                  return ClipRRect(
+                                                    borderRadius: const BorderRadius.vertical(top: Radius.circular(24.0)),
+                                                    child: BackdropFilter(
+                                                      filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
+                                                      child: Container(
+                                                        decoration: BoxDecoration(
+                                                          color: const Color(0xFF0F0F12).withOpacity(0.95),
+                                                          border: Border(
+                                                            top: BorderSide(color: Colors.white.withOpacity(0.08), width: 1.0),
+                                                          ),
+                                                        ),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+                                                        child: Column(
+                                                          mainAxisSize: MainAxisSize.min,
+                                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                                          children: [
+                                                            Center(
+                                                              child: Container(
+                                                                width: 36.0,
+                                                                height: 4.0,
+                                                                decoration: BoxDecoration(
+                                                                  color: Colors.white24,
+                                                                  borderRadius: BorderRadius.circular(10.0),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                            const SizedBox(height: 20.0),
+                                                            Text(
+                                                              "SELECT VIDEO PLAYER",
+                                                              style: GoogleFonts.cinzel(
+                                                                fontSize: 18.0,
+                                                                fontWeight: FontWeight.w900,
+                                                                color: Colors.white,
+                                                                letterSpacing: 1.0,
+                                                              ),
+                                                            ),
+                                                            const SizedBox(height: 4.0),
+                                                            Text(
+                                                              "Choose your preferred external media engine for mobile video streams.",
+                                                              style: GoogleFonts.plusJakartaSans(
+                                                                color: Colors.white54,
+                                                                fontSize: 11.5,
+                                                              ),
+                                                            ),
+                                                            const SizedBox(height: 16.0),
+                                                            if (isLoading)
+                                                              const Center(
+                                                                child: Padding(
+                                                                  padding: EdgeInsets.symmetric(vertical: 32.0),
+                                                                  child: CircularProgressIndicator(strokeWidth: 2.0),
+                                                                ),
+                                                              )
+                                                            else if (players.isEmpty)
+                                                              Padding(
+                                                                padding: const EdgeInsets.symmetric(vertical: 24.0),
+                                                                child: Text(
+                                                                  "No external media players detected.",
+                                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white38),
+                                                                ),
+                                                              )
+                                                            else
+                                                              ConstrainedBox(
+                                                                constraints: BoxConstraints(
+                                                                  maxHeight: MediaQuery.of(context).size.height * 0.4,
+                                                                ),
+                                                                child: ListView.builder(
+                                                                  shrinkWrap: true,
+                                                                  itemCount: players.length,
+                                                                  itemBuilder: (context, index) {
+                                                                    final p = players[index];
+                                                                    final name = p['name'] ?? 'Unknown Player';
+                                                                    final package = p['package'] ?? '';
+                                                                    final isSelected = selectedPlayerPackage == package;
+
+                                                                    IconData pIcon = Icons.play_circle_outline_rounded;
+                                                                    Color pIconColor = Colors.white60;
+
+                                                                    if (package.contains("vlc")) {
+                                                                      pIcon = Icons.play_circle_filled_rounded;
+                                                                      pIconColor = Colors.orangeAccent;
+                                                                    } else if (package.contains("mxtech")) {
+                                                                      pIcon = Icons.play_circle_filled_rounded;
+                                                                      pIconColor = Colors.blueAccent;
+                                                                    } else if (package.contains("nova")) {
+                                                                      pIcon = Icons.play_circle_filled_rounded;
+                                                                      pIconColor = Colors.greenAccent;
+                                                                    } else if (package.contains("kodi")) {
+                                                                      pIcon = Icons.dashboard_rounded;
+                                                                      pIconColor = Colors.cyanAccent;
+                                                                    }
+
+                                                                    return Container(
+                                                                      margin: const EdgeInsets.only(bottom: 8.0),
+                                                                      decoration: BoxDecoration(
+                                                                        color: isSelected 
+                                                                            ? primaryColor.withOpacity(0.06) 
+                                                                            : Colors.white.withOpacity(0.02),
+                                                                        borderRadius: BorderRadius.circular(12.0),
+                                                                        border: Border.all(
+                                                                          color: isSelected 
+                                                                              ? primaryColor.withOpacity(0.3) 
+                                                                              : Colors.white.withOpacity(0.05),
+                                                                        ),
+                                                                      ),
+                                                                      child: ListTile(
+                                                                        leading: Icon(pIcon, color: pIconColor),
+                                                                        title: Text(
+                                                                          name,
+                                                                          style: GoogleFonts.plusJakartaSans(
+                                                                            color: Colors.white,
+                                                                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                                                          ),
+                                                                        ),
+                                                                        subtitle: Text(
+                                                                          package,
+                                                                          style: GoogleFonts.plusJakartaSans(
+                                                                            color: Colors.white30,
+                                                                            fontSize: 10.0,
+                                                                          ),
+                                                                        ),
+                                                                        trailing: isSelected
+                                                                            ? Icon(Icons.check_circle_rounded, color: primaryColor)
+                                                                            : null,
+                                                                        onTap: () {
+                                                                          setSheetState(() {
+                                                                            selectedPlayerPackage = package;
+                                                                            selectedPlayerName = name;
+                                                                          });
+                                                                          Navigator.pop(dialogContext);
+                                                                        },
+                                                                      ),
+                                                                    );
+                                                                  },
+                                                                ),
+                                                              ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  );
+                                                },
+                                              );
+                                            },
+                                          );
+                                        },
+                                        borderRadius: BorderRadius.circular(14.0),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(0.04),
+                                            borderRadius: BorderRadius.circular(14.0),
+                                            border: Border.all(color: Colors.white12),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    "Default External Player",
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: Colors.white70,
+                                                      fontSize: 11.0,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4.0),
+                                                  Text(
+                                                    selectedPlayerName,
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: Colors.white,
+                                                      fontSize: 14.0,
+                                                      fontWeight: FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              Row(
+                                                children: [
+                                                  Text(
+                                                    "CHANGE",
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: primaryColor,
+                                                      fontSize: 11.0,
+                                                      fontWeight: FontWeight.w900,
+                                                      letterSpacing: 0.5,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6.0),
+                                                  Icon(Icons.arrow_forward_ios_rounded, color: primaryColor, size: 12.0),
+                                                ],
+                                              ),
                                             ],
                                           ),
                                         ),
                                       ),
-                                    );
-                                  },
-                                );
-                              },
-                            );
-                          },
-                          borderRadius: BorderRadius.circular(14.0),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.04),
-                              borderRadius: BorderRadius.circular(14.0),
-                              border: Border.all(color: Colors.white12),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      "Default External Player",
-                                      style: GoogleFonts.plusJakartaSans(
-                                        color: Colors.white70,
-                                        fontSize: 11.0,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4.0),
-                                    Text(
-                                      selectedPlayerName,
-                                      style: GoogleFonts.plusJakartaSans(
-                                        color: Colors.white,
-                                        fontSize: 14.0,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
+                                const SizedBox(height: 24.0),
+
+                                // CATEGORY 6: API GATEWAY CONFIG
+                                buildCategoryHeader("API GATEWAY SETTINGS", Icons.dns_outlined, primaryColor),
+                                const SizedBox(height: 8.0),
+                                Container(
+                                  padding: const EdgeInsets.all(16.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Configure custom server links to synchronize collaborative playlists, watch progress, and listings.",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          color: Colors.white60,
+                                          fontSize: 12.0,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      GestureDetector(
+                                        onTap: () => checkConnection(setSheetState, urlController.text),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+                                          decoration: BoxDecoration(
+                                            color: statusColor.withOpacity(0.08),
+                                            borderRadius: BorderRadius.circular(12.0),
+                                            border: Border.all(color: statusColor.withOpacity(0.3), width: 0.8),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              AnimatedContainer(
+                                                duration: const Duration(milliseconds: 300),
+                                                width: 10.0,
+                                                height: 10.0,
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: statusColor,
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: statusColor.withOpacity(0.6),
+                                                      blurRadius: 8.0,
+                                                      spreadRadius: 2.0,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(width: 10.0),
+                                              Text(
+                                                statusText,
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  color: statusColor,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 12.0,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.04),
+                                          borderRadius: BorderRadius.circular(14.0),
+                                          border: Border.all(color: Colors.white12),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                                        child: TextField(
+                                          controller: urlController,
+                                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
+                                          decoration: InputDecoration(
+                                            labelText: "API Gateway Base URL",
+                                            labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                                            hintText: "e.g., https://your-server.render.com",
+                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
+                                            border: InputBorder.none,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 24.0),
+
+                                // CATEGORY 7: IPTV STREAM CONFIG
+                                buildCategoryHeader("IPTV & M3U STREAM SETUP", Icons.live_tv_rounded, primaryColor),
+                                const SizedBox(height: 8.0),
+                                Container(
+                                  padding: const EdgeInsets.all(16.0),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.02),
+                                    borderRadius: BorderRadius.circular(16.0),
+                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        "Enter your custom M3U playlist URL and Electronic Program Guide (EPG) XML to map Live Channels inside the TV Simulator.",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          color: Colors.white60,
+                                          fontSize: 12.0,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16.0),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.04),
+                                          borderRadius: BorderRadius.circular(14.0),
+                                          border: Border.all(color: Colors.white12),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                                        child: TextField(
+                                          controller: m3uController,
+                                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
+                                          decoration: InputDecoration(
+                                            labelText: "M3U Playlist URL",
+                                            labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                                            hintText: "https://your-domain.com/playlist.m3u",
+                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
+                                            border: InputBorder.none,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12.0),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.04),
+                                          borderRadius: BorderRadius.circular(14.0),
+                                          border: Border.all(color: Colors.white12),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                                        child: TextField(
+                                          controller: epgController,
+                                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
+                                          decoration: InputDecoration(
+                                            labelText: "EPG XML URL (Optional)",
+                                            labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                                            hintText: "http://your-domain.com/epg.xml",
+                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
+                                            border: InputBorder.none,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 28.0),
+
+                                // Action Buttons Row (Test Connection, Save)
                                 Row(
                                   children: [
-                                    Text(
-                                      "CHANGE",
-                                      style: GoogleFonts.plusJakartaSans(
-                                        color: primaryColor,
-                                        fontSize: 11.0,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 0.5,
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        onPressed: () => checkConnection(setSheetState, urlController.text),
+                                        icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                                        label: Text(
+                                          "Test Connection",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        style: OutlinedButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(vertical: 14.0),
+                                          side: const BorderSide(color: Colors.white24),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(14.0),
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                    const SizedBox(width: 6.0),
-                                    Icon(Icons.arrow_forward_ios_rounded, color: primaryColor, size: 12.0),
+                                    const SizedBox(width: 12.0),
+                                    Expanded(
+                                      child: ElevatedButton.icon(
+                                        onPressed: () async {
+                                          final newUrl = urlController.text.trim();
+                                          await ApiService.setCustomBaseUrl(newUrl);
+
+                                          final prefs = await SharedPreferences.getInstance();
+                                          await prefs.setString('iptv_m3u_url', m3uController.text.trim());
+                                          await prefs.setString('iptv_epg_url', epgController.text.trim());
+                                          
+                                          await prefs.setBool('use_external_player', useExternalPlayer);
+                                          await prefs.setString('selected_external_player_package', selectedPlayerPackage);
+                                          await prefs.setString('selected_external_player_name', selectedPlayerName);
+                                          
+                                          await prefs.setBool('multi_profile_enabled', multiProfileEnabled);
+
+                                          final roles = ['Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'];
+                                          for (final role in roles) {
+                                            final customName = nameControllers[role]!.text.trim();
+                                            final customAvatar = avatarControllers[role]!.text.trim();
+                                            if (customName.isNotEmpty) {
+                                              await prefs.setString('profile_name_$role', customName);
+                                            }
+                                            if (customAvatar.isNotEmpty) {
+                                              await prefs.setString('profile_avatar_$role', customAvatar);
+                                            } else {
+                                              await prefs.remove('profile_avatar_$role');
+                                            }
+                                            
+                                            final hasPin = hasPinMap[role] ?? false;
+                                            await prefs.setBool('profile_has_pin_$role', hasPin);
+                                            final pinVal = pinControllers[role]!.text.trim();
+                                            if (pinVal.length == 4) {
+                                              await prefs.setString('profile_pin_$role', pinVal);
+                                            }
+                                            
+                                            final isKids = isKidsMap[role] ?? false;
+                                            await prefs.setBool('profile_is_kids_$role', isKids);
+                                          }
+                                          
+                                          await checkConnection(setSheetState, newUrl);
+                                          
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  isConnected == true
+                                                      ? "Connected & Settings saved successfully!"
+                                                      : "Saved custom URL and IPTV URLs, but backend is offline.",
+                                                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                ),
+                                                backgroundColor: isConnected == true ? Colors.greenAccent : const Color(0xFF1E1E24),
+                                              ),
+                                            );
+                                            Navigator.pop(stateContext);
+                                          }
+                                        },
+                                        icon: const Icon(Icons.check_rounded, color: Colors.black),
+                                        label: Text(
+                                          "Apply & Save",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.black,
+                                          ),
+                                        ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: primaryColor,
+                                          padding: const EdgeInsets.symmetric(vertical: 14.0),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(14.0),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   ],
                                 ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 24.0),
-                        const Divider(color: Colors.white12, height: 1.0),
-                        const SizedBox(height: 24.0),
-
-                        Text(
-                          "IPTV & M3U PLAYLIST SETUP",
-                          style: GoogleFonts.cinzel(
-                            fontSize: 18.0,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                            letterSpacing: 1.5,
-                          ),
-                        ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          "Enter your custom M3U playlist URL and optional EPG XML to synchronize Live Channels to your widescreen TV experience.",
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white60,
-                            fontSize: 13.0,
-                            height: 1.4,
-                          ),
-                        ),
-                        const SizedBox(height: 20.0),
-
-                        // M3U Input
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(14.0),
-                            border: Border.all(color: Colors.white12),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                          child: TextField(
-                            controller: m3uController,
-                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 15.0),
-                            decoration: InputDecoration(
-                              labelText: "M3U Playlist URL",
-                              labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
-                              hintText: "https://your-domain.com/playlist.m3u",
-                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
-                              border: InputBorder.none,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12.0),
-
-                        // EPG Input
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(14.0),
-                            border: Border.all(color: Colors.white12),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                          child: TextField(
-                            controller: epgController,
-                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 15.0),
-                            decoration: InputDecoration(
-                              labelText: "EPG XML URL (Optional)",
-                              labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 13.0),
-                              hintText: "http://your-domain.com/epg.xml",
-                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 14.0),
-                              border: InputBorder.none,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 28.0),
-
-                        // Buttons
-                        Row(
-                          children: [
-                            // Test button
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => checkConnection(setSheetState, urlController.text),
-                                icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-                                label: Text(
-                                  "Test Connection",
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 14.0),
-                                  side: const BorderSide(color: Colors.white24),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14.0),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12.0),
-
-                            // Save & Connect button
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: () async {
-                                  final newUrl = urlController.text.trim();
-                                  await ApiService.setCustomBaseUrl(newUrl);
-
-                                  // Save IPTV credentials to SharedPreferences
-                                  final prefs = await SharedPreferences.getInstance();
-                                  await prefs.setString('iptv_m3u_url', m3uController.text.trim());
-                                  await prefs.setString('iptv_epg_url', epgController.text.trim());
-                                  
-                                  // Save External Player Configuration
-                                  await prefs.setBool('use_external_player', useExternalPlayer);
-                                  await prefs.setString('selected_external_player_package', selectedPlayerPackage);
-                                  await prefs.setString('selected_external_player_name', selectedPlayerName);
-                                  
-                                  // Save profile custom names, avatars, PINs, and Kids flags
-                                  final roles = ['Director', 'Producer', 'Critic', 'Viewer'];
-                                  for (final role in roles) {
-                                    final customName = nameControllers[role]!.text.trim();
-                                    final customAvatar = avatarControllers[role]!.text.trim();
-                                    if (customName.isNotEmpty) {
-                                      await prefs.setString('profile_name_$role', customName);
-                                    }
-                                    if (customAvatar.isNotEmpty) {
-                                      await prefs.setString('profile_avatar_$role', customAvatar);
-                                    } else {
-                                      await prefs.remove('profile_avatar_$role');
-                                    }
-                                    
-                                    // Save PIN configurations
-                                    final hasPin = hasPinMap[role] ?? false;
-                                    await prefs.setBool('profile_has_pin_$role', hasPin);
-                                    final pinVal = pinControllers[role]!.text.trim();
-                                    if (pinVal.length == 4) {
-                                      await prefs.setString('profile_pin_$role', pinVal);
-                                    }
-                                    
-                                    // Save Kids Mode configuration
-                                    final isKids = isKidsMap[role] ?? false;
-                                    await prefs.setBool('profile_is_kids_$role', isKids);
-                                  }
-                                  
-                                  // Re-test connection for validation
-                                  await checkConnection(setSheetState, newUrl);
-                                  
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          isConnected == true
-                                              ? "Connected & Settings saved successfully!"
-                                              : "Saved custom URL and IPTV URLs, but backend is offline.",
-                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                        ),
-                                        backgroundColor: isConnected == true ? Colors.greenAccent : const Color(0xFF1E1E24),
-                                      ),
-                                    );
-                                    Navigator.pop(stateContext);
-                                  }
-                                },
-                                icon: const Icon(Icons.check_rounded, color: Colors.black),
-                                label: Text(
-                                  "Apply & Save",
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primaryColor,
-                                  padding: const EdgeInsets.symmetric(vertical: 14.0),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14.0),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
                               ],
                             ),
                           ),

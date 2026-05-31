@@ -100,7 +100,10 @@ app.use((req, res, next) => {
 // Telegram Credentials
 const apiId = parseInt(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
-const sessionString = process.env.TELEGRAM_SESSION_STRING;
+let sessionString = process.env.TELEGRAM_SESSION_STRING;
+
+// Temporary active logins cache for in-app verification flow
+const activeLogins = {};
 
 // TMDB Credentials
 const tmdbApiKey = process.env.TMDB_API_KEY;
@@ -192,6 +195,156 @@ app.get("/stream", async (req, res) => {
   }
 
   await handleStream(tgClient, channelId, messageId, req, res);
+});
+
+// ----------------------------------------------------
+// DYNAMIC TELEGRAM IN-APP AUTHENTICATION ENDPOINTS
+// ----------------------------------------------------
+
+// 1. Get Telegram Connection and Login Status
+app.get("/telegram/status", async (req, res) => {
+  try {
+    const isConnected = tgClient !== null && tgClient.connected;
+    let me = null;
+    if (isConnected) {
+      try {
+        me = await tgClient.getMe();
+      } catch (_) {}
+    }
+    res.json({
+      success: true,
+      loggedIn: isConnected,
+      username: me ? me.username : null,
+      firstName: me ? me.firstName : null,
+      lastName: me ? me.lastName : null,
+      phoneNumber: me ? me.phone : null,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.toString() });
+  }
+});
+
+// 2. Request Telegram Login Code
+app.post("/telegram/login/send-code", async (req, res) => {
+  const { phoneNumber } = req.body;
+  if (!phoneNumber) {
+    return res.status(400).json({ success: false, error: "phoneNumber is required." });
+  }
+
+  try {
+    console.log(`Initiating Telegram sign-in for: ${phoneNumber}`);
+    const session = new StringSession(""); // Initialize a temporary fresh session
+    const client = new TelegramClient(session, apiId, apiHash, {
+      connectionRetries: 5,
+    });
+
+    await client.connect();
+    
+    const { phoneCodeHash } = await client.sendCode({ apiId, apiHash }, phoneNumber);
+    
+    // Cache the temporary client in memory keyed by phone number
+    activeLogins[phoneNumber] = {
+      client,
+      phoneCodeHash,
+      phoneNumber
+    };
+
+    res.json({
+      success: true,
+      phoneCodeHash
+    });
+  } catch (err) {
+    console.error("Failed to request Telegram code:", err);
+    res.status(400).json({ success: false, error: err.message || err.toString() });
+  }
+});
+
+// 3. Verify Telegram Login Code & Store Persistent Session
+app.post("/telegram/login/verify", async (req, res) => {
+  const { phoneNumber, phoneCodeHash, code, password } = req.body;
+  
+  if (!phoneNumber || !phoneCodeHash || !code) {
+    return res.status(400).json({ success: false, error: "phoneNumber, phoneCodeHash, and code are required." });
+  }
+
+  const cached = activeLogins[phoneNumber];
+  if (!cached) {
+    return res.status(400).json({ success: false, error: "No active login session found for this phone number." });
+  }
+
+  const { client } = cached;
+
+  try {
+    console.log(`Verifying login code for: ${phoneNumber}`);
+    await client.signIn({
+      phoneNumber,
+      phoneCodeHash,
+      phoneCode: code,
+      password: async () => password || "", // Handles 2FA if enabled
+    });
+
+    const newSessionString = client.session.save();
+    
+    // Save to global variables in memory
+    sessionString = newSessionString;
+    tgClient = client;
+    
+    // Persist session to .env file automatically
+    const fs = require("fs");
+    const path = require("path");
+    const envPath = path.join(__dirname, "../.env");
+    let envContent = "";
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, "utf8");
+    }
+    
+    if (envContent.includes("TELEGRAM_SESSION_STRING=")) {
+      envContent = envContent.replace(/TELEGRAM_SESSION_STRING=.*/, `TELEGRAM_SESSION_STRING="${newSessionString}"`);
+    } else {
+      envContent += `\nTELEGRAM_SESSION_STRING="${newSessionString}"`;
+    }
+    fs.writeFileSync(envPath, envContent, "utf8");
+    
+    // Clean cache
+    delete activeLogins[phoneNumber];
+
+    console.log("SUCCESSFULLY LOGGED IN AND PERSISTED DYNAMIC TELEGRAM SESSION STRING!");
+    res.json({
+      success: true,
+      sessionString: newSessionString
+    });
+  } catch (err) {
+    console.error("Verification code failure:", err);
+    res.status(400).json({ success: false, error: err.message || err.toString() });
+  }
+});
+
+// 4. Logout / Disconnect Telegram Account
+app.post("/telegram/logout", async (req, res) => {
+  try {
+    console.log("Disconnecting Telegram account...");
+    if (tgClient) {
+      try {
+        await tgClient.disconnect();
+      } catch (_) {}
+      tgClient = null;
+    }
+    sessionString = "";
+
+    // Remove session from .env file
+    const fs = require("fs");
+    const path = require("path");
+    const envPath = path.join(__dirname, "../.env");
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, "utf8");
+      envContent = envContent.replace(/TELEGRAM_SESSION_STRING=.*/, `TELEGRAM_SESSION_STRING=""`);
+      fs.writeFileSync(envPath, envContent, "utf8");
+    }
+
+    res.json({ success: true, message: "Logged out successfully." });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.toString() });
+  }
 });
 
 // ----------------------------------------------------
@@ -1377,6 +1530,300 @@ app.get("/health", (req, res) => {
   });
 });
 
+// ====================================================
+// PHASE 3 ENDPOINTS (CHATS SELECTOR & MANUAL RESOLVER)
+// ====================================================
+
+// 1. Fetch user's channels/megagroups for indexing selector
+app.get("/telegram/chats", async (req, res) => {
+  if (!tgClient) {
+    return res.status(400).json({ success: false, error: "Telegram Gateway offline. Connect account first." });
+  }
+  try {
+    const dialogs = await tgClient.getDialogs({ limit: 100 });
+    const chats = dialogs
+      .filter(d => d.isChannel || d.isGroup)
+      .map(d => ({
+        id: d.id.toString(),
+        title: d.title || (d.entity && (d.entity.title || d.entity.username || d.entity.firstName || "Unnamed Chat")),
+        isChannel: d.isChannel || false,
+        isGroup: d.isGroup || false,
+        unreadCount: d.unreadCount || 0
+      }));
+    res.json({ success: true, chats });
+  } catch (err) {
+    console.error("Fetch Telegram chats error:", err);
+    res.status(500).json({ success: false, error: err.toString() });
+  }
+});
+
+// 2. Sync selected indexing channels from app to scanner env
+app.post("/telegram/channels", async (req, res) => {
+  try {
+    const { channels } = req.body;
+    if (!Array.isArray(channels)) {
+      return res.status(400).json({ success: false, error: "Channels array is required" });
+    }
+    
+    const scannerService = require("./scannerService");
+    scannerService.setDynamicChannels(channels);
+
+    // Save channels to env file for persistent backend restarts
+    const fs = require("fs");
+    const path = require("path");
+    const envPath = path.join(__dirname, "../.env");
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, "utf8");
+      const moviesChan = channels.find(c => c.type === "movie");
+      const tvChan = channels.find(c => c.type === "tv");
+      const animeChan = channels.find(c => c.type === "anime");
+      
+      if (moviesChan) {
+        if (envContent.includes("TELEGRAM_CHANNEL_MOVIES=")) {
+          envContent = envContent.replace(/TELEGRAM_CHANNEL_MOVIES=.*/, `TELEGRAM_CHANNEL_MOVIES="${moviesChan.id}"`);
+        } else {
+          envContent += `\nTELEGRAM_CHANNEL_MOVIES="${moviesChan.id}"`;
+        }
+      }
+      if (tvChan) {
+        if (envContent.includes("TELEGRAM_CHANNEL_TV=")) {
+          envContent = envContent.replace(/TELEGRAM_CHANNEL_TV=.*/, `TELEGRAM_CHANNEL_TV="${tvChan.id}"`);
+        } else {
+          envContent += `\nTELEGRAM_CHANNEL_TV="${tvChan.id}"`;
+        }
+      }
+      if (animeChan) {
+        if (envContent.includes("TELEGRAM_CHANNEL_ANIME=")) {
+          envContent = envContent.replace(/TELEGRAM_CHANNEL_ANIME=.*/, `TELEGRAM_CHANNEL_ANIME="${animeChan.id}"`);
+        } else {
+          envContent += `\nTELEGRAM_CHANNEL_ANIME="${animeChan.id}"`;
+        }
+      }
+      fs.writeFileSync(envPath, envContent, "utf8");
+    }
+
+    res.json({ success: true, message: "Channel configurations synced successfully." });
+  } catch (err) {
+    console.error("Save channel configurations error:", err);
+    res.status(500).json({ success: false, error: err.toString() });
+  }
+});
+
+// 3. Fetch unresolved listings (tmdb_id === '0')
+app.get("/listings/unresolved", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+  try {
+    const { data, error } = await supabase
+      .from("media_listings")
+      .select("*")
+      .eq("tmdb_id", "0")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    res.json({ success: true, listings: data });
+  } catch (error) {
+    console.error("Fetch unresolved listings error:", error);
+    res.status(500).json({ error: "Database error fetching unresolved listings." });
+  }
+});
+
+// 4. TMDB Search candidate list
+app.get("/listings/search-candidates", async (req, res) => {
+  const { query, type } = req.query;
+  const tmdbApiKey = process.env.TMDB_API_KEY;
+  if (!query) {
+    return res.status(400).json({ error: "Query parameter is required" });
+  }
+  if (!tmdbApiKey) {
+    return res.status(501).json({ error: "TMDB API Key not configured." });
+  }
+  
+  try {
+    const isTv = type === "tv" || type === "anime";
+    const tmdbUrl = isTv
+      ? `https://api.themoviedb.org/3/search/tv?api_key=${tmdbApiKey}&query=${encodeURIComponent(query)}&language=en-US`
+      : `https://api.themoviedb.org/3/search/movie?api_key=${tmdbApiKey}&query=${encodeURIComponent(query)}&language=en-US`;
+      
+    const response = await fetch(tmdbUrl);
+    if (!response.ok) {
+      throw new Error(`TMDB responded with HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const results = (data.results || []).slice(0, 5).map(item => ({
+      tmdbId: item.id.toString(),
+      title: item.title || item.name,
+      year: (item.release_date || item.first_air_date || "").split("-")[0] || "",
+      overview: item.overview || "",
+      posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w342${item.poster_path}` : null,
+      backdropPath: item.backdrop_path ? `https://image.tmdb.org/t/p/w780${item.backdrop_path}` : null
+    }));
+    res.json({ success: true, candidates: results });
+  } catch (err) {
+    console.error("Search candidates error:", err);
+    res.status(500).json({ success: false, error: err.toString() });
+  }
+});
+
+// 5. Submit manual resolution fix
+app.post("/listings/resolve", async (req, res) => {
+  if (!supabase) {
+    return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+  try {
+    const { id, tmdbId, type, title } = req.body;
+    if (!id || !tmdbId) {
+      return res.status(400).json({ success: false, error: "Listing id and tmdbId are required" });
+    }
+    
+    const { data, error } = await supabase
+      .from("media_listings")
+      .update({
+        tmdb_id: tmdbId.toString(),
+        type: type || "movie",
+        title: title || undefined
+      })
+      .eq("id", id)
+      .select()
+      .maybeSingle();
+      
+    if (error) throw error;
+    res.json({ success: true, message: "Listing resolved successfully", listing: data });
+  } catch (err) {
+    console.error("Resolve listing error:", err);
+    res.status(500).json({ success: false, error: err.toString() });
+  }
+});
+
+// ====================================================
+// FORWARD-TO-CINEGRAM TELEGRAM BOT (LONG-POLLING)
+// ====================================================
+
+async function startTelegramBotListener(token) {
+  console.log("[Bot] Initializing Forward-to-Cinegram Telegram Bot Listener...");
+  let offset = 0;
+  
+  const poll = async () => {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=30`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.ok && data.result.length > 0) {
+          for (const update of data.result) {
+            offset = update.update_id + 1;
+            if (update.message) {
+              await handleBotMessage(token, update.message);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[Bot] Polling connection error:", err.message);
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    setTimeout(poll, 1000);
+  };
+  
+  poll();
+}
+
+async function handleBotMessage(token, msg) {
+  const chatId = msg.chat.id;
+  const text = msg.text || "";
+  
+  if (text.startsWith("/start")) {
+    await sendBotMessage(token, chatId, "🎬 **Welcome to Cinegram Bot!**\n\nForward any video file, movie print, or media upload from *any* Telegram channel directly to me, and I will instantly index it into your Cinegram Watch Library! 🍿");
+    return;
+  }
+  
+  const video = msg.video || msg.document || msg.audio;
+  if (!video) {
+    await sendBotMessage(token, chatId, "ℹ️ Please **Forward** a video or document media file to sync it directly with Cinegram.");
+    return;
+  }
+  
+  const filename = video.file_name || (msg.document && msg.document.file_name) || "Video_Print.mp4";
+  
+  // Parse original source for perfect MTProto streaming
+  const channelId = msg.forward_from_chat ? msg.forward_from_chat.id.toString() : chatId.toString();
+  const messageId = msg.forward_from_message_id ? msg.forward_from_message_id.toString() : msg.message_id.toString();
+  
+  await sendBotMessage(token, chatId, `⚡ **Processing print:** "${filename}"...\nExtracting metadata and resolving TMDB match...`);
+  
+  const { parseFilename, getQuality } = require("./scannerService");
+  const parsed = parseFilename(filename);
+  const quality = getQuality(filename);
+  
+  let tmdbId = "0";
+  let resolvedTitle = parsed.title;
+  let resolvedType = parsed.type || "movie";
+  
+  const tmdbApiKey = process.env.TMDB_API_KEY;
+  if (tmdbApiKey) {
+    try {
+      const tmdbUrl = resolvedType === "tv"
+        ? `https://api.themoviedb.org/3/search/tv?api_key=${tmdbApiKey}&query=${encodeURIComponent(parsed.title)}&language=en-US`
+        : `https://api.themoviedb.org/3/search/movie?api_key=${tmdbApiKey}&query=${encodeURIComponent(parsed.title)}&language=en-US`;
+        
+      const res = await fetch(tmdbUrl);
+      if (res.ok) {
+        const data = await res.ok ? await res.json() : {};
+        const results = data.results || [];
+        if (results.length > 0) {
+          const match = results[0];
+          tmdbId = match.id.toString();
+          resolvedTitle = match.title || match.name;
+        }
+      }
+    } catch (_) {}
+  }
+  
+  try {
+    if (!supabase) {
+      throw new Error("Supabase integration not configured.");
+    }
+    
+    const { error } = await supabase
+      .from("media_listings")
+      .upsert([{
+        tmdb_id: tmdbId,
+        title: resolvedTitle,
+        type: resolvedType,
+        channel_id: channelId,
+        message_id: messageId,
+        quality: quality
+      }], { onConflict: "channel_id,message_id" });
+      
+    if (error) throw error;
+    
+    if (tmdbId !== "0") {
+      await sendBotMessage(token, chatId, `🎬 **Cinegram Sync Successful!**\n\n🍿 **"${resolvedTitle}"** has been matched and added to your watch catalog successfully! Open the app to stream it now.`);
+    } else {
+      await sendBotMessage(token, chatId, `⚠️ **Cinegram Indexed (Unresolved Match):**\n\nWe successfully saved "${filename}" but couldn't verify it against TMDB. You can manually resolve it using the **Unresolved Library Matches** panel inside your app settings!`);
+    }
+  } catch (err) {
+    console.error("Bot sync error:", err);
+    await sendBotMessage(token, chatId, `❌ **Database Sync Failed:** ${err.message}`);
+  }
+}
+
+async function sendBotMessage(token, chatId, text) {
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: text,
+        parse_mode: "Markdown"
+      })
+    });
+  } catch (err) {
+    console.error("Bot sendMessage error:", err);
+  }
+}
+
 app.setTgClient = (client) => { tgClient = client; };
 app.setSupabase = (client) => { supabase = client; };
 
@@ -1384,6 +1831,9 @@ if (process.env.NODE_ENV !== "test") {
   app.listen(PORT, async () => {
     console.log(`Cinegram Gateway Server running on http://localhost:${PORT}`);
     await initTelegram();
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+      startTelegramBotListener(process.env.TELEGRAM_BOT_TOKEN);
+    }
   });
 }
 

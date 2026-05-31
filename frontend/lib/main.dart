@@ -3,8 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/cinegram_theme.dart';
-import 'screens/home.dart';
-import 'screens/profile_select.dart';
+import 'screens/onboarding_check.dart';
 import 'services/api_service.dart';
 
 import 'services/download_manager.dart';
@@ -58,7 +57,7 @@ class CinegramApp extends StatelessWidget {
       title: 'Cinegram',
       debugShowCheckedModeBanner: false,
       theme: CinegramTheme.darkTheme(themeProvider.accentColor),
-      home: const ProfileSelectScreen(),
+      home: const OnboardingCheckScreen(),
     );
   }
 }

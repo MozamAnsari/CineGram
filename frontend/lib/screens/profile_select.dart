@@ -18,17 +18,17 @@ class ProfileSelectScreen extends StatefulWidget {
 
 class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTickerProviderStateMixin {
   final Map<String, String> _profileNames = {
-    'Director': 'Director',
-    'Producer': 'Producer',
-    'Critic': 'Critic',
-    'Viewer': 'Viewer',
+    'Profile 1': 'Profile 1',
+    'Profile 2': 'Profile 2',
+    'Profile 3': 'Profile 3',
+    'Profile 4': 'Profile 4',
   };
 
   final Map<String, String> _profileAvatars = {
-    'Director': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150',
-    'Producer': 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?q=80&w=150',
-    'Critic': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=150',
-    'Viewer': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150',
+    'Profile 1': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150',
+    'Profile 2': 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?q=80&w=150',
+    'Profile 3': 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?q=80&w=150',
+    'Profile 4': 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150',
   };
 
   final Map<String, String> _profilePins = {};
@@ -84,7 +84,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
           }
           
           // Load profile PIN
-          final hasPin = prefs.getBool('profile_has_pin_$role') ?? (role == 'Director');
+          final hasPin = prefs.getBool('profile_has_pin_$role') ?? (role == 'Profile 1');
           final savedPin = prefs.getString('profile_pin_$role');
           if (hasPin) {
             _profilePins[role] = (savedPin != null && savedPin.isNotEmpty) ? savedPin : '1234';
@@ -349,7 +349,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
                                     roleKey: role,
                                     name: _profileNames[role]!,
                                     imageUrl: _profileAvatars[role]!,
-                                    isSecured: role == 'Director',
+                                    isSecured: role == 'Profile 1',
                                     onTap: () => _onProfileSelected(role),
                                     onEditName: () => _showRenameDialog(role),
                                   ),
@@ -367,7 +367,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
                                       roleKey: role,
                                       name: _profileNames[role]!,
                                       imageUrl: _profileAvatars[role]!,
-                                      isSecured: role == 'Director',
+                                      isSecured: role == 'Profile 1',
                                       onTap: () => _onProfileSelected(role),
                                       onEditName: () => _showRenameDialog(role),
                                     ),
@@ -433,7 +433,7 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
                           ),
                           const SizedBox(height: 12.0),
                           Text(
-                            "Director PIN Required",
+                            "Profile 1 PIN Required",
                             style: GoogleFonts.cinzel(
                               fontSize: 20.0,
                               fontWeight: FontWeight.bold,
