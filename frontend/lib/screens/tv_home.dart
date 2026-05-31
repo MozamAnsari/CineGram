@@ -521,6 +521,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _backdropMediaItem = mockMediaDatabase.firstWhere((item) => item.category == 'Trending');
     _searchResults = List.from(mockMediaDatabase);
     _serverUrlController.text = ApiService.baseUrl;
@@ -645,6 +649,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> {
     _iptvEpgFocusNode.dispose();
     _iptvSaveFocusNode.dispose();
     _iptvReloadFocusNode.dispose();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
     super.dispose();
   }
 

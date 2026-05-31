@@ -14,6 +14,7 @@ import 'tv_player.dart';
 import 'package:provider/provider.dart';
 import '../theme/cinegram_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 
 
 class HomeScreen extends StatefulWidget {
@@ -41,6 +42,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
     _featuredItem = mockMediaDatabase.firstWhere((item) => item.category == 'Trending');
     
     // Seed initial row lists with static mocks for immediate display
@@ -282,25 +287,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     Navigator.push(
                       context,
                       PageRouteBuilder(
-                        pageBuilder: (context, animation, secondaryAnimation) => const TvHomeScreen(),
-                        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                          return FadeTransition(opacity: animation, child: child);
-                        },
-                      ),
-                    );
-                  },
-                  icon: Icon(Icons.tv_rounded, size: 28.0, color: Theme.of(context).primaryColor),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withOpacity(0.08),
-                    padding: const EdgeInsets.all(10.0),
-                  ),
-                ),
-                const SizedBox(width: 12.0),
-                IconButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      PageRouteBuilder(
                         pageBuilder: (context, animation, secondaryAnimation) => const SearchScreen(),
                         transitionsBuilder: (context, animation, secondaryAnimation, child) {
                           return FadeTransition(opacity: animation, child: child);
@@ -355,7 +341,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       },
       child: Container(
         key: ValueKey<String>(_featuredItem.id),
-        height: size.height * 0.62,
+        height: size.height > 550 ? size.height * 0.62 : 360.0,
         width: double.infinity,
         child: Stack(
           children: [
@@ -506,17 +492,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   const SizedBox(height: 12.0),
 
                   // Mini Synopsis description
-                  Text(
-                    _featuredItem.synopsis,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.plusJakartaSans(
-                      color: Colors.white70,
-                      fontSize: 12.5,
-                      height: 1.4,
+                  if (size.height > 550) ...[
+                    Text(
+                      _featuredItem.synopsis,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white70,
+                        fontSize: 12.5,
+                        height: 1.4,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 20.0),
+                    const SizedBox(height: 20.0),
+                  ],
 
                   // Buttons
                   Row(
@@ -1135,15 +1123,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
                   child: Container(
+                    height: MediaQuery.of(context).size.height * 0.85,
                     decoration: BoxDecoration(
                       color: const Color(0xFF0F0F12).withOpacity(0.95),
                       border: Border(
                         top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1.5),
                       ),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // Indicator handle
@@ -1178,6 +1166,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ],
                         ),
                         const SizedBox(height: 16.0),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                         
                         // Profile Switcher Section
                         Text(
@@ -1299,6 +1293,60 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               ),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 24.0),
+                        const Divider(color: Colors.white12, height: 1.0),
+                        const SizedBox(height: 24.0),
+
+                        // TV Simulator Mode Section
+                        Text(
+                          "TV SIMULATOR MODE",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12.0,
+                            fontWeight: FontWeight.bold,
+                            color: primaryColor,
+                            letterSpacing: 1.0,
+                          ),
+                        ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          "Experience the widescreen TV dashboard design optimized for remote controls and landscape widescreen viewports.",
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white60,
+                            fontSize: 12.0,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 12.0),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context); // Close bottom sheet
+                            Navigator.push(
+                              context,
+                              PageRouteBuilder(
+                                pageBuilder: (context, animation, secondaryAnimation) => const TvHomeScreen(),
+                                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                                  return FadeTransition(opacity: animation, child: child);
+                                },
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.tv_rounded, color: Colors.black, size: 18),
+                          label: Text(
+                            "Launch Widescreen TV Simulator",
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black,
+                              fontSize: 12.0,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: primaryColor,
+                            minimumSize: const Size(double.infinity, 44),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10.0),
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 24.0),
                         const Divider(color: Colors.white12, height: 1.0),
@@ -2200,6 +2248,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               ),
                             ),
                           ],
+                        ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),

@@ -42,6 +42,10 @@ class _ProfileSelectScreenState extends State<ProfileSelectScreen> with SingleTi
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
     _loadCustomNames();
     
     // Set up shake animation for PIN error

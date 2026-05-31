@@ -12,6 +12,10 @@ import 'services/download_manager.dart';
 void main() async {
   // Ensure visual services are bound
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
   
   // Load custom backend server URL if previously saved
   await ApiService.init();
