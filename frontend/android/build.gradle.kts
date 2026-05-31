@@ -27,7 +27,8 @@ subprojects {
             ext?.set("flutter", mapOf(
                 "compileSdkVersion" to 34,
                 "minSdkVersion" to 21,
-                "targetSdkVersion" to 34
+                "targetSdkVersion" to 34,
+                "ndkVersion" to "26.1.10909125"
             ))
         }
         project.dependencies.add("implementation", "androidx.core:core-ktx:1.12.0")
@@ -40,7 +41,8 @@ subprojects {
                 ext.set("flutter", mapOf(
                     "compileSdkVersion" to 34,
                     "minSdkVersion" to 21,
-                    "targetSdkVersion" to 34
+                    "targetSdkVersion" to 34,
+                    "ndkVersion" to "26.1.10909125"
                 ))
             }
         }
