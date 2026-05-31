@@ -4,7 +4,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
-const { TelegramClient } = require("telegram");
+const { TelegramClient, Api } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const { createClient } = require("@supabase/supabase-js");
 const { handleStream } = require("./streamManager");
@@ -276,12 +276,33 @@ app.post("/telegram/login/verify", async (req, res) => {
 
   try {
     console.log(`Verifying login code for: ${phoneNumber}`);
-    await client.signIn({
-      phoneNumber,
-      phoneCodeHash,
-      phoneCode: code,
-      password: async () => password || "", // Handles 2FA if enabled
-    });
+    let signInResult;
+    try {
+      signInResult = await client.invoke(
+        new Api.auth.SignIn({
+          phoneNumber,
+          phoneCodeHash,
+          phoneCode: code,
+        })
+      );
+    } catch (err) {
+      const errMsg = err.errorMessage || err.message;
+      if (errMsg === "SESSION_PASSWORD_NEEDED") {
+        if (!password) {
+          throw new Error("Two-factor authentication (2FA) is enabled on this account. Please enter your 2FA Cloud Password.");
+        }
+        const { computeCheck } = require("telegram/Password");
+        const passwordSrpResult = await client.invoke(new Api.account.GetPassword());
+        const passwordSrpCheck = await computeCheck(passwordSrpResult, password);
+        signInResult = await client.invoke(
+          new Api.auth.CheckPassword({
+            password: passwordSrpCheck,
+          })
+        );
+      } else {
+        throw err;
+      }
+    }
 
     const newSessionString = client.session.save();
     
