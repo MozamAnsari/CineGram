@@ -60,7 +60,11 @@ class _DetailsScreenState extends State<DetailsScreen> with SingleTickerProvider
       context,
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
-            TvPlayerScreen(mediaItem: widget.mediaItem),
+            TvPlayerScreen(
+              mediaItem: widget.mediaItem,
+              channelId: widget.mediaItem.channelId,
+              messageId: widget.mediaItem.messageId,
+            ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
@@ -78,19 +82,9 @@ class _DetailsScreenState extends State<DetailsScreen> with SingleTickerProvider
     if (downloadedTask != null && downloadedTask.status == 'completed') {
       streamUrl = downloadedTask.localPath;
     } else {
-      // Resolve simulated channel/message details
-      String channelId = '-100192837482';
-      String messageId = '404';
-      if (item.id == 'm1') {
-        channelId = '-100192837482';
-        messageId = '401';
-      } else if (item.id == 'm2') {
-        channelId = '-100192837482';
-        messageId = '402';
-      } else if (item.id == 'a1') {
-        channelId = '-100192837482';
-        messageId = '403';
-      }
+      // Resolve dynamic Telegram channels/message details, falling back to static mocks if needed
+      final channelId = item.channelId ?? (item.id == 'm1' ? '-100192837482' : (item.id == 'm2' ? '-100192837482' : (item.id == 'a1' ? '-100192837482' : '-100192837482')));
+      final messageId = item.messageId ?? (item.id == 'm1' ? '401' : (item.id == 'm2' ? '402' : (item.id == 'a1' ? '403' : '404')));
       streamUrl = '${ApiService.baseUrl}/stream?channelId=$channelId&messageId=$messageId';
     }
 

@@ -1513,11 +1513,6 @@ app.post("/telegram/channels", async (req, res) => {
     const channelsJsonPath = path.join(__dirname, "./channels.json");
     fs.writeFileSync(channelsJsonPath, JSON.stringify(channels, null, 2), "utf8");
 
-    // Automatically trigger immediate background library scanning on channels update!
-    runScan(tgClient, supabase).catch(err => {
-      console.error("[Scanner] Background scan launch failed:", err);
-    });
-
     res.json({ success: true, message: "Channel configurations synced successfully." });
   } catch (err) {
     console.error("Save channel configurations error:", err);

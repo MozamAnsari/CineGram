@@ -25,6 +25,7 @@ class _ChannelSelectorScreenState extends State<ChannelSelectorScreen> {
   bool _isSyncingActive = false;
   Map<String, dynamic>? _syncProgress;
   Timer? _syncTimer;
+  bool _isSyncMaximized = false;
 
   // Tab & Search state
   String _activeTab = 'all'; // 'all' (All Joined) or 'mine' (Private/Created)
@@ -164,7 +165,13 @@ class _ChannelSelectorScreenState extends State<ChannelSelectorScreen> {
           if (mounted) {
             setState(() {
               _isSyncingActive = active;
-              _syncProgress = progress;
+              if (active) {
+                _syncProgress = progress;
+              } else {
+                if (_syncProgress != null) {
+                  _syncProgress = progress;
+                }
+              }
             });
           }
           if (!active && _syncTimer != null) {
@@ -205,6 +212,77 @@ class _ChannelSelectorScreenState extends State<ChannelSelectorScreen> {
 
     final bool isDone = status == 'completed';
 
+    if (!_isSyncMaximized) {
+      // MINIMIZED VIEW: Luxury Glassmorphic Floating Ball
+      return Tooltip(
+        message: isDone ? "Sync Completed - Tap to view logs" : "Syncing library ($processed indexed) - Tap to expand",
+        child: GestureDetector(
+          onTap: () {
+            setState(() {
+              _isSyncMaximized = true;
+            });
+          },
+          child: Container(
+            width: 56.0,
+            height: 56.0,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F0F12).withOpacity(0.85),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isDone ? Colors.greenAccent.withOpacity(0.4) : primaryColor.withOpacity(0.4),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: (isDone ? Colors.greenAccent : primaryColor).withOpacity(0.15),
+                  blurRadius: 15,
+                  spreadRadius: 1,
+                )
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28.0),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Center(
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (!isDone)
+                        SizedBox(
+                          width: 40.0,
+                          height: 40.0,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.0,
+                            valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                          ),
+                        )
+                      else
+                        const SizedBox(
+                          width: 40.0,
+                          height: 40.0,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.0,
+                            value: 1.0,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.greenAccent),
+                          ),
+                        ),
+                      Icon(
+                        isDone ? Icons.check_rounded : Icons.sync_rounded,
+                        color: isDone ? Colors.greenAccent : Colors.white,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // MAXIMIZED VIEW: Detailed Glassmorphic Terminal Log Window
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF0F0F12).withOpacity(0.95),
@@ -237,10 +315,13 @@ class _ChannelSelectorScreenState extends State<ChannelSelectorScreen> {
                     Row(
                       children: [
                         if (!isDone)
-                          const SpinKitRing(
-                            color: Colors.cyanAccent,
-                            size: 16.0,
-                            lineWidth: 2.0,
+                          const SizedBox(
+                            width: 16.0,
+                            height: 16.0,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.0,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+                            ),
                           )
                         else
                           const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18),
@@ -256,17 +337,32 @@ class _ChannelSelectorScreenState extends State<ChannelSelectorScreen> {
                         ),
                       ],
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 18),
-                      onPressed: () {
-                        setState(() {
-                          _syncProgress = null;
-                          _syncTimer?.cancel();
-                          _syncTimer = null;
-                        });
-                      },
-                      constraints: const BoxConstraints(),
-                      padding: EdgeInsets.zero,
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.unfold_less_rounded, color: Colors.white54, size: 18),
+                          onPressed: () {
+                            setState(() {
+                              _isSyncMaximized = false;
+                            });
+                          },
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                        ),
+                        const SizedBox(width: 12),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 18),
+                          onPressed: () {
+                            setState(() {
+                              _syncProgress = null;
+                              _syncTimer?.cancel();
+                              _syncTimer = null;
+                            });
+                          },
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                        ),
+                      ],
                     )
                   ],
                 ),
@@ -755,6 +851,67 @@ class _ChannelSelectorScreenState extends State<ChannelSelectorScreen> {
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
+          // Explicit manual library sync button
+          TextButton.icon(
+            onPressed: () async {
+              if (_isSyncingActive) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      "Scanning already in progress...",
+                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                    ),
+                    backgroundColor: Colors.amber[700],
+                  ),
+                );
+                return;
+              }
+              
+              // Trigger active real scan and maximize the progress overlay panel
+              setState(() {
+                _isSyncMaximized = true;
+              });
+              
+              final result = await ApiService.triggerActiveScan();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      result['success'] == true 
+                          ? "Telegram scanning sweep launched!" 
+                          : "Scanning sweep launch failed. Gateway offline.",
+                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                    ),
+                    backgroundColor: result['success'] == true ? primaryColor : Colors.redAccent,
+                  ),
+                );
+                // Force sync polling to update states dynamically
+                _startSyncPolling();
+              }
+            },
+            icon: Icon(
+              Icons.sync_rounded,
+              color: _isSyncingActive ? primaryColor : Colors.white,
+              size: 16,
+            ),
+            label: Text(
+              _isSyncingActive ? "SYNCING..." : "SYNC NOW",
+              style: GoogleFonts.plusJakartaSans(
+                color: _isSyncingActive ? primaryColor : Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 11.5,
+                letterSpacing: 0.5,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: _isSyncingActive ? primaryColor.withOpacity(0.4) : Colors.white24),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.notifications_none_rounded, color: Colors.white70),
             onPressed: () {
@@ -986,7 +1143,7 @@ class _ChannelSelectorScreenState extends State<ChannelSelectorScreen> {
       ),
       Positioned(
         bottom: 16,
-        left: 16,
+        left: _isSyncMaximized ? 16 : null,
         right: 16,
         child: _buildSyncProgressOverlay(),
       ),

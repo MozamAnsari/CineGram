@@ -19,7 +19,6 @@ import 'onboarding_check.dart';
 import 'channel_selector.dart';
 import 'unresolved_queue.dart';
 import 'telegram_login.dart';
-import 'package:flutter_spinkit/flutter_spinkit.dart';
 
 
 class HomeScreen extends StatefulWidget {
@@ -41,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _isSyncingActive = false;
   Map<String, dynamic>? _syncProgress;
   Timer? _syncTimer;
+  bool _isSyncMaximized = false;
 
   // Dynamic cloud live sync rows
   List<MediaItem> _dynamicContinueWatching = [];
@@ -175,7 +175,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           if (mounted) {
             setState(() {
               _isSyncingActive = active;
-              _syncProgress = progress;
+              if (active) {
+                _syncProgress = progress;
+              } else {
+                if (_syncProgress != null) {
+                  _syncProgress = progress;
+                }
+              }
             });
           }
           if (!active && _syncTimer != null) {
@@ -216,6 +222,77 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     final bool isDone = status == 'completed';
 
+    if (!_isSyncMaximized) {
+      // MINIMIZED VIEW: Luxury Glassmorphic Floating Ball
+      return Tooltip(
+        message: isDone ? "Sync Completed - Tap to view logs" : "Syncing library ($processed indexed) - Tap to expand",
+        child: GestureDetector(
+          onTap: () {
+            setState(() {
+              _isSyncMaximized = true;
+            });
+          },
+          child: Container(
+            width: 56.0,
+            height: 56.0,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F0F12).withOpacity(0.85),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isDone ? Colors.greenAccent.withOpacity(0.4) : primaryColor.withOpacity(0.4),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: (isDone ? Colors.greenAccent : primaryColor).withOpacity(0.15),
+                  blurRadius: 15,
+                  spreadRadius: 1,
+                )
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28.0),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Center(
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (!isDone)
+                        SizedBox(
+                          width: 40.0,
+                          height: 40.0,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.0,
+                            valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                          ),
+                        )
+                      else
+                        const SizedBox(
+                          width: 40.0,
+                          height: 40.0,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.0,
+                            value: 1.0,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.greenAccent),
+                          ),
+                        ),
+                      Icon(
+                        isDone ? Icons.check_rounded : Icons.sync_rounded,
+                        color: isDone ? Colors.greenAccent : Colors.white,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // MAXIMIZED VIEW: Detailed Glassmorphic Terminal Log Window
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16.0),
       decoration: BoxDecoration(
@@ -249,10 +326,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     Row(
                       children: [
                         if (!isDone)
-                          const SpinKitRing(
-                            color: Colors.cyanAccent,
-                            size: 16.0,
-                            lineWidth: 2.0,
+                          const SizedBox(
+                            width: 16.0,
+                            height: 16.0,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.0,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+                            ),
                           )
                         else
                           const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18),
@@ -268,17 +348,32 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         ),
                       ],
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 18),
-                      onPressed: () {
-                        setState(() {
-                          _syncProgress = null;
-                          _syncTimer?.cancel();
-                          _syncTimer = null;
-                        });
-                      },
-                      constraints: const BoxConstraints(),
-                      padding: EdgeInsets.zero,
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.unfold_less_rounded, color: Colors.white54, size: 18),
+                          onPressed: () {
+                            setState(() {
+                              _isSyncMaximized = false;
+                            });
+                          },
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                        ),
+                        const SizedBox(width: 12),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 18),
+                          onPressed: () {
+                            setState(() {
+                              _syncProgress = null;
+                              _syncTimer?.cancel();
+                              _syncTimer = null;
+                            });
+                          },
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                        ),
+                      ],
                     )
                   ],
                 ),
@@ -428,7 +523,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           // REALTIME INDEX SYNC OVERLAY PROGRESS
           Positioned(
             bottom: 24,
-            left: 16,
+            left: _isSyncMaximized ? 16 : null,
             right: 16,
             child: _buildSyncProgressOverlay(),
           ),

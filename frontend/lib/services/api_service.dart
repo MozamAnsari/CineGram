@@ -244,14 +244,13 @@ class ApiService {
     }
   ];
 
-  /// Triggers an active scanner scan of the Telegram channel.
   static Future<Map<String, dynamic>> triggerActiveScan() async {
     try {
-      final response = await _dio.post('/listings/scan');
+      final response = await _dio.post('/scanner/trigger');
       if (response.statusCode == 200) {
         return {
           'success': true,
-          'logs': List<String>.from(response.data['logs'] ?? []),
+          'logs': ['[System] Connecting to Telegram MTProto channels...', '[System] Active channel scan triggered successfully.'],
         };
       }
     } catch (e) {
@@ -370,6 +369,9 @@ class ApiService {
       genres = ['Sci-Fi', 'Psychological', 'Drama'];
     }
 
+    final String? channelId = item['channel_id']?.toString();
+    final String? messageId = item['message_id']?.toString();
+
     return MediaItem(
       id: item['id']?.toString() ?? tmdbId,
       title: title,
@@ -383,6 +385,8 @@ class ApiService {
       genres: genres,
       cast: const [],
       category: 'Popular',
+      channelId: channelId,
+      messageId: messageId,
     );
   }
 

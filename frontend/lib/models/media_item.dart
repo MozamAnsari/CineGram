@@ -24,6 +24,8 @@ class MediaItem {
   final List<CastMember> cast;
   final double? progress; // For Continue Watching row
   final String category; // 'Trending' | 'Popular' | 'Top Rated'
+  final String? channelId;
+  final String? messageId;
 
   const MediaItem({
     required this.id,
@@ -39,6 +41,8 @@ class MediaItem {
     required this.cast,
     this.progress,
     required this.category,
+    this.channelId,
+    this.messageId,
   });
 }
 

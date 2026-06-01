@@ -222,10 +222,13 @@ class _TvPlayerScreenState extends State<TvPlayerScreen> {
     }
 
     if (localPath == null) {
+      final String? resolvedChannelId = widget.channelId ?? widget.mediaItem?.channelId;
+      final String? resolvedMessageId = widget.messageId ?? widget.mediaItem?.messageId;
+
       if (widget.streamUrl != null && widget.streamUrl!.isNotEmpty) {
         streamUrl = widget.streamUrl!;
-      } else if (widget.channelId != null && widget.messageId != null) {
-        streamUrl = '${ApiService.baseUrl}/stream?channelId=${widget.channelId}&messageId=${widget.messageId}';
+      } else if (resolvedChannelId != null && resolvedMessageId != null) {
+        streamUrl = '${ApiService.baseUrl}/stream?channelId=$resolvedChannelId&messageId=$resolvedMessageId';
       } else if (widget.media != null && widget.media!.streamUrl != null && widget.media!.streamUrl!.isNotEmpty) {
         streamUrl = widget.media!.streamUrl!;
       } else {
