@@ -159,6 +159,16 @@ class _TelegramLoginScreenState extends State<TelegramLoginScreen> with SingleTi
         await prefs.setString('telegram_session_string_cache', response.data['sessionString'] ?? 'active');
         await prefs.setString('telegram_phone', phone);
 
+        try {
+          final statusRes = await Dio().get("${ApiService.baseUrl}/telegram/status");
+          if (statusRes.statusCode == 200 && statusRes.data['success'] == true) {
+            final String? username = statusRes.data['username'];
+            if (username != null && username.isNotEmpty) {
+              await prefs.setString('telegram_username', username);
+            }
+          }
+        } catch (_) {}
+
         setState(() {
           _isLoading = false;
         });

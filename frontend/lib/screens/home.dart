@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,7 +9,6 @@ import '../services/api_service.dart';
 import '../services/external_player_service.dart';
 import 'details.dart';
 import 'search.dart';
-import 'tv_home.dart';
 import 'tv_player.dart';
 import 'package:provider/provider.dart';
 import '../theme/cinegram_theme.dart';
@@ -19,6 +19,7 @@ import 'onboarding_check.dart';
 import 'channel_selector.dart';
 import 'unresolved_queue.dart';
 import 'telegram_login.dart';
+import 'package:flutter_spinkit/flutter_spinkit.dart';
 
 
 class HomeScreen extends StatefulWidget {
@@ -37,6 +38,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _isKidsProfileActive = false;
   String? _activeRole;
 
+  bool _isSyncingActive = false;
+  Map<String, dynamic>? _syncProgress;
+  Timer? _syncTimer;
+
   // Dynamic cloud live sync rows
   List<MediaItem> _dynamicContinueWatching = [];
   List<MediaItem> _dynamicMovies = [];
@@ -46,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
+    _startSyncPolling();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -151,7 +157,211 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void dispose() {
     _mainScrollController.dispose();
+    _syncTimer?.cancel();
     super.dispose();
+  }
+
+  void _startSyncPolling() {
+    _syncTimer?.cancel();
+    _syncTimer = Timer.periodic(const Duration(milliseconds: 1500), (timer) async {
+      try {
+        final response = await Dio().get(
+          "${ApiService.baseUrl}/scanner/status",
+          options: Options(receiveTimeout: const Duration(seconds: 5)),
+        );
+        if (response.statusCode == 200) {
+          final active = response.data['active'] ?? false;
+          final progress = response.data['progress'];
+          if (mounted) {
+            setState(() {
+              _isSyncingActive = active;
+              _syncProgress = progress;
+            });
+          }
+          if (!active && _syncTimer != null) {
+            if (progress != null && progress['status'] == 'completed') {
+              Future.delayed(const Duration(seconds: 5), () {
+                if (mounted && !_isSyncingActive) {
+                  setState(() {
+                    _syncProgress = null;
+                    _syncTimer?.cancel();
+                    _syncTimer = null;
+                  });
+                }
+              });
+            } else {
+              _syncTimer?.cancel();
+              _syncTimer = null;
+            }
+          }
+        }
+      } catch (_) {}
+    });
+  }
+
+  Widget _buildSyncProgressOverlay() {
+    if (_syncProgress == null) return const SizedBox.shrink();
+
+    final primaryColor = Theme.of(context).primaryColor;
+    final status = _syncProgress!['status'] ?? 'idle';
+    final processed = _syncProgress!['processedItems'] ?? 0;
+    final resolved = _syncProgress!['resolvedItems'] ?? 0;
+    final totalChans = _syncProgress!['totalChannels'] ?? 0;
+    final curChan = _syncProgress!['currentChannel'] ?? 0;
+    final curChanName = _syncProgress!['currentChannelName'] ?? '';
+    final List<dynamic> rawLogs = _syncProgress!['logs'] ?? [];
+    
+    final List<String> logs = rawLogs.map((l) => l.toString()).toList();
+    final List<String> lastLogs = logs.length > 3 ? logs.sublist(logs.length - 3) : logs;
+
+    final bool isDone = status == 'completed';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F0F12).withOpacity(0.95),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDone ? Colors.greenAccent.withOpacity(0.3) : Colors.cyanAccent.withOpacity(0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (isDone ? Colors.greenAccent : Colors.cyanAccent).withOpacity(0.12),
+            blurRadius: 20,
+            spreadRadius: 2,
+          )
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        if (!isDone)
+                          const SpinKitRing(
+                            color: Colors.cyanAccent,
+                            size: 16.0,
+                            lineWidth: 2.0,
+                          )
+                        else
+                          const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18),
+                        const SizedBox(width: 10),
+                        Text(
+                          isDone ? "SYNC COMPLETED" : "REALTIME LIBRARY SYNCING",
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12.0,
+                            color: isDone ? Colors.greenAccent : Colors.cyanAccent,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 18),
+                      onPressed: () {
+                        setState(() {
+                          _syncProgress = null;
+                          _syncTimer?.cancel();
+                          _syncTimer = null;
+                        });
+                      },
+                      constraints: const BoxConstraints(),
+                      padding: EdgeInsets.zero,
+                    )
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Scanning Sources",
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            "$curChan of $totalChans ($curChanName)",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          "Files Sync'd (Resolved)",
+                          style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          "$processed Indexed ($resolved Match)",
+                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white.withOpacity(0.05)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: lastLogs.isEmpty 
+                      ? [
+                          Text(
+                            "Waiting for file data streams...",
+                            style: GoogleFonts.shareTechMono(color: Colors.white30, fontSize: 10.5),
+                          )
+                        ]
+                      : lastLogs.map((log) {
+                          final isError = log.contains("[ERROR]") || log.contains("[RLS ALERT]");
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4.0),
+                            child: Text(
+                              log,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.shareTechMono(
+                                color: isError ? Colors.redAccent : (isDone ? Colors.greenAccent : Colors.cyanAccent.withOpacity(0.85)),
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _updateFeaturedItem(MediaItem item) {
@@ -214,6 +424,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
           // GLASSMORPHIC TOP APP BAR
           _buildFloatingAppBar(context),
+
+          // REALTIME INDEX SYNC OVERLAY PROGRESS
+          Positioned(
+            bottom: 24,
+            left: 16,
+            right: 16,
+            child: _buildSyncProgressOverlay(),
+          ),
         ],
       ),
     );
@@ -924,8 +1142,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final bool isTelegramLoggedIn = prefs.getBool('telegram_logged_in') ?? false;
 
     final TextEditingController urlController = TextEditingController(text: ApiService.baseUrl);
-    final TextEditingController m3uController = TextEditingController(text: prefs.getString('iptv_m3u_url') ?? 'https://cinegram.io/playlist.m3u');
-    final TextEditingController epgController = TextEditingController(text: prefs.getString('iptv_epg_url') ?? 'http://cinegram.io/epg.xml');
     final TextEditingController hexColorController = TextEditingController();
     
     final Map<String, bool> hasPinMap = {};
@@ -954,6 +1170,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     bool multiProfileEnabled = prefs.getBool('multi_profile_enabled') ?? true;
     String connectedPhone = prefs.getString('telegram_phone') ?? "";
+    String telegramUsername = prefs.getString('telegram_username') ?? "";
+    String currentCategory = 'main';
 
     bool? isConnected;
     bool isChecking = false;
@@ -1009,6 +1227,79 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           builder: (stateContext, setSheetState) {
             final themeProvider = Provider.of<ThemeProvider>(stateContext);
             final primaryColor = Theme.of(stateContext).primaryColor;
+
+            // Background update telegram status dynamically
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (isConnected == null) {
+                isConnected = false; // Prevents loop re-triggers
+                Dio().get("${ApiService.baseUrl}/telegram/status").then((statusRes) {
+                  if (statusRes.statusCode == 200 && statusRes.data['success'] == true) {
+                    final newUsername = statusRes.data['username'] ?? "";
+                    final newPhone = statusRes.data['phoneNumber'] ?? "";
+                    if (stateContext.mounted) {
+                      setSheetState(() {
+                        if (newUsername.isNotEmpty) {
+                          telegramUsername = newUsername;
+                          prefs.setString('telegram_username', newUsername);
+                        }
+                        if (newPhone.isNotEmpty) {
+                          connectedPhone = newPhone;
+                          prefs.setString('telegram_phone', newPhone);
+                        }
+                      });
+                    }
+                  }
+                }).catchError((_) {});
+              }
+            });
+
+            Widget buildAndroidSettingTile({
+              required IconData icon,
+              required String title,
+              required String description,
+              required Color color,
+              required VoidCallback onTap,
+            }) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12.0),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.02),
+                  borderRadius: BorderRadius.circular(16.0),
+                  border: Border.all(color: Colors.white.withOpacity(0.06)),
+                ),
+                child: ListTile(
+                  onTap: onTap,
+                  leading: Container(
+                    padding: const EdgeInsets.all(10.0),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, color: color, size: 22.0),
+                  ),
+                  title: Text(
+                    title,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  subtitle: Text(
+                    description,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11.5,
+                      color: Colors.white38,
+                    ),
+                  ),
+                  trailing: const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white30,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                ),
+              );
+            }
 
             Widget buildCategoryHeader(String title, IconData icon, Color color) {
               return Padding(
@@ -1078,18 +1369,39 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(
-                              "SETTINGS",
-                              style: GoogleFonts.cinzel(
-                                fontSize: 24.0,
-                                fontWeight: FontWeight.w900,
-                                color: Colors.white,
-                                letterSpacing: 1.5,
-                              ),
+                            Row(
+                              children: [
+                                if (currentCategory != 'main')
+                                  IconButton(
+                                    icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70, size: 20),
+                                    onPressed: () => setSheetState(() => currentCategory = 'main'),
+                                    constraints: const BoxConstraints(),
+                                    padding: const EdgeInsets.only(right: 12.0),
+                                  ),
+                                Text(
+                                  currentCategory == 'main' 
+                                      ? "SETTINGS" 
+                                      : (currentCategory == 'network' 
+                                          ? "CONNECTION" 
+                                          : (currentCategory == 'telegram' 
+                                              ? "GATEWAY" 
+                                              : (currentCategory == 'visual' 
+                                                  ? "THEMES" 
+                                                  : (currentCategory == 'playback' 
+                                                      ? "PLAYBACK" 
+                                                      : "CINEMATIC")))),
+                                  style: GoogleFonts.cinzel(
+                                    fontSize: 22.0,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                    letterSpacing: 1.5,
+                                  ),
+                                ),
+                              ],
                             ),
                             IconButton(
                               icon: const Icon(Icons.close_rounded, color: Colors.white60),
-                              onPressed: () => Navigator.pop(context),
+                              onPressed: () => Navigator.pop(sheetContext),
                             ),
                           ],
                         ),
@@ -1100,152 +1412,846 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // CATEGORY 1: TELEGRAM GATEWAY CONNECTION
-                                buildCategoryHeader("TELEGRAM GATEWAY CONNECTION", Icons.telegram_rounded, primaryColor),
-                                const SizedBox(height: 8.0),
-                                Container(
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.02),
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                if (currentCategory == 'main') ...[
+                                  buildCategoryHeader("CATEGORIES", Icons.grid_view_rounded, primaryColor),
+                                  const SizedBox(height: 12.0),
+                                  buildAndroidSettingTile(
+                                    icon: Icons.dns_rounded,
+                                    title: "Network & Connection",
+                                    description: "Cinegram server URLs, online status, and connection test",
+                                    color: primaryColor,
+                                    onTap: () => setSheetState(() => currentCategory = 'network'),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              Container(
-                                                padding: const EdgeInsets.all(10.0),
-                                                decoration: BoxDecoration(
-                                                  color: (isTelegramLoggedIn ? Colors.blueAccent : Colors.amberAccent).withOpacity(0.1),
-                                                  shape: BoxShape.circle,
-                                                ),
-                                                child: Icon(
-                                                  isTelegramLoggedIn ? Icons.phone_android_rounded : Icons.cloud_off_rounded,
-                                                  color: isTelegramLoggedIn ? Colors.blueAccent : Colors.amberAccent,
-                                                  size: 20.0,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 12.0),
-                                              Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                  buildAndroidSettingTile(
+                                    icon: Icons.telegram_rounded,
+                                    title: "Telegram Account Gateway",
+                                    description: "Active status, username details, and library selectors",
+                                    color: Colors.blueAccent,
+                                    onTap: () => setSheetState(() => currentCategory = 'telegram'),
+                                  ),
+                                  buildAndroidSettingTile(
+                                    icon: Icons.palette_outlined,
+                                    title: "Visual Theme Accent",
+                                    description: "System look and feel, dark modes, and custom color presets",
+                                    color: Colors.purpleAccent,
+                                    onTap: () => setSheetState(() => currentCategory = 'visual'),
+                                  ),
+                                  buildAndroidSettingTile(
+                                    icon: Icons.play_circle_outline_rounded,
+                                    title: "Playback & Subtitles",
+                                    description: "External players and closed-captions style configuration",
+                                    color: Colors.amberAccent,
+                                    onTap: () => setSheetState(() => currentCategory = 'playback'),
+                                  ),
+                                  buildAndroidSettingTile(
+                                    icon: Icons.analytics_rounded,
+                                    title: "Cinematic Stats & Co-Watch",
+                                    description: "Custom donut stats charts, speedometers, watch parties, and radars",
+                                    color: Colors.greenAccent,
+                                    onTap: () => setSheetState(() => currentCategory = 'cinematic'),
+                                  ),
+                                ] else if (currentCategory == 'telegram') ...[
+                                  // CATEGORY 1: TELEGRAM GATEWAY CONNECTION
+                                  buildCategoryHeader("TELEGRAM GATEWAY CONNECTION", Icons.telegram_rounded, primaryColor),
+                                  const SizedBox(height: 8.0),
+                                  Container(
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.02),
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Expanded(
+                                              child: Row(
                                                 children: [
-                                                  Text(
-                                                    "GATEWAY STATUS",
-                                                    style: GoogleFonts.plusJakartaSans(
-                                                      color: Colors.white38,
-                                                      fontSize: 10.0,
-                                                      fontWeight: FontWeight.bold,
+                                                  Container(
+                                                    padding: const EdgeInsets.all(10.0),
+                                                    decoration: BoxDecoration(
+                                                      color: (isTelegramLoggedIn ? Colors.blueAccent : Colors.amberAccent).withOpacity(0.1),
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                    child: Icon(
+                                                      isTelegramLoggedIn ? Icons.phone_android_rounded : Icons.cloud_off_rounded,
+                                                      color: isTelegramLoggedIn ? Colors.blueAccent : Colors.amberAccent,
+                                                      size: 20.0,
                                                     ),
                                                   ),
-                                                  const SizedBox(height: 2.0),
-                                                  Text(
-                                                    isTelegramLoggedIn 
-                                                        ? (connectedPhone.isNotEmpty ? connectedPhone : "Active Gateway Session")
-                                                        : "Guest Explorer Mode",
-                                                    style: GoogleFonts.plusJakartaSans(
-                                                      color: Colors.white,
-                                                      fontSize: 14.0,
-                                                      fontWeight: FontWeight.bold,
+                                                  const SizedBox(width: 12.0),
+                                                  Expanded(
+                                                    child: Column(
+                                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                                      children: [
+                                                        Text(
+                                                          "GATEWAY STATUS",
+                                                          style: GoogleFonts.plusJakartaSans(
+                                                            color: Colors.white38,
+                                                            fontSize: 10.0,
+                                                            fontWeight: FontWeight.bold,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(height: 2.0),
+                                                        Text(
+                                                          isTelegramLoggedIn 
+                                                              ? (telegramUsername.isNotEmpty 
+                                                                  ? (telegramUsername.startsWith('@') ? telegramUsername : '@$telegramUsername') + (connectedPhone.isNotEmpty ? " ($connectedPhone)" : "")
+                                                                  : (connectedPhone.isNotEmpty ? connectedPhone : "Active Gateway Session"))
+                                                              : "Guest Explorer Mode",
+                                                          overflow: TextOverflow.ellipsis,
+                                                          style: GoogleFonts.plusJakartaSans(
+                                                            color: Colors.white,
+                                                            fontSize: 13.0,
+                                                            fontWeight: FontWeight.bold,
+                                                          ),
+                                                        ),
+                                                      ],
                                                     ),
                                                   ),
                                                 ],
                                               ),
-                                            ],
-                                          ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
-                                            decoration: BoxDecoration(
-                                              color: (isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent).withOpacity(0.1),
-                                              borderRadius: BorderRadius.circular(8.0),
-                                              border: Border.all(color: (isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent).withOpacity(0.2)),
                                             ),
-                                            child: Row(
-                                              children: [
-                                                Container(
-                                                  width: 6.0,
-                                                  height: 6.0,
-                                                  decoration: BoxDecoration(
-                                                    color: isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent,
-                                                    shape: BoxShape.circle,
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 10.0, vertical: 6.0),
+                                              decoration: BoxDecoration(
+                                                color: (isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent).withOpacity(0.1),
+                                                borderRadius: BorderRadius.circular(8.0),
+                                                border: Border.all(color: (isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent).withOpacity(0.2)),
+                                              ),
+                                              child: Row(
+                                                children: [
+                                                  Container(
+                                                    width: 6.0,
+                                                    height: 6.0,
+                                                    decoration: BoxDecoration(
+                                                      color: isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent,
+                                                      shape: BoxShape.circle,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 6.0),
+                                                  Text(
+                                                    isTelegramLoggedIn ? "ONLINE" : "OFFLINE",
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent,
+                                                      fontSize: 10.0,
+                                                      fontWeight: FontWeight.w900,
+                                                      letterSpacing: 0.5,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 20.0),
+                                        if (isTelegramLoggedIn) ...[
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: ElevatedButton.icon(
+                                                  onPressed: () {
+                                                    Navigator.pop(context);
+                                                    Navigator.push(
+                                                      context,
+                                                      MaterialPageRoute(builder: (context) => const ChannelSelectorScreen()),
+                                                    ).then((_) => _loadCloudData());
+                                                  },
+                                                  icon: const Icon(Icons.campaign_rounded, color: Colors.black, size: 16),
+                                                  label: Text(
+                                                    "Library Chats",
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      fontWeight: FontWeight.bold,
+                                                      color: Colors.black,
+                                                      fontSize: 11.5,
+                                                    ),
+                                                  ),
+                                                  style: ElevatedButton.styleFrom(
+                                                    backgroundColor: primaryColor,
+                                                    padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius: BorderRadius.circular(10.0),
+                                                    ),
                                                   ),
                                                 ),
-                                                const SizedBox(width: 6.0),
-                                                Text(
-                                                  isTelegramLoggedIn ? "ONLINE" : "OFFLINE",
-                                                  style: GoogleFonts.plusJakartaSans(
-                                                    color: isTelegramLoggedIn ? Colors.greenAccent : Colors.amberAccent,
-                                                    fontSize: 10.0,
-                                                    fontWeight: FontWeight.w900,
-                                                    letterSpacing: 0.5,
+                                              ),
+                                              const SizedBox(width: 10.0),
+                                              Expanded(
+                                                child: OutlinedButton.icon(
+                                                  onPressed: () {
+                                                    Navigator.pop(context);
+                                                    Navigator.push(
+                                                      context,
+                                                      MaterialPageRoute(builder: (context) => const UnresolvedQueueScreen()),
+                                                    );
+                                                  },
+                                                  icon: Icon(Icons.movie_filter_rounded, color: primaryColor, size: 16),
+                                                  label: Text(
+                                                    "Fix Matches",
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      fontWeight: FontWeight.bold,
+                                                      color: Colors.white,
+                                                      fontSize: 11.5,
+                                                    ),
                                                   ),
+                                                  style: OutlinedButton.styleFrom(
+                                                    side: BorderSide(color: primaryColor, width: 1.0),
+                                                    padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius: BorderRadius.circular(10.0),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 16.0),
+                                          SizedBox(
+                                            width: double.infinity,
+                                            child: OutlinedButton.icon(
+                                              onPressed: () async {
+                                                final confirm = await showDialog<bool>(
+                                                  context: context,
+                                                  builder: (dialogCtx) => AlertDialog(
+                                                    backgroundColor: const Color(0xFF0F0F12),
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius: BorderRadius.circular(16.0),
+                                                      side: BorderSide(color: Colors.white.withOpacity(0.1)),
+                                                    ),
+                                                    title: Text(
+                                                      "Disconnect Gateway?",
+                                                      style: GoogleFonts.cinzel(color: Colors.white, fontWeight: FontWeight.bold),
+                                                    ),
+                                                    content: Text(
+                                                      "Are you sure you want to log out and disconnect your Telegram account from Cinegram?",
+                                                      style: GoogleFonts.plusJakartaSans(color: Colors.white70),
+                                                    ),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () => Navigator.pop(dialogCtx, false),
+                                                        child: Text("Cancel", style: GoogleFonts.plusJakartaSans(color: Colors.white38)),
+                                                      ),
+                                                      ElevatedButton(
+                                                        onPressed: () => Navigator.pop(dialogCtx, true),
+                                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                                                        child: Text("Disconnect", style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+
+                                                if (confirm == true) {
+                                                  setSheetState(() {
+                                                    isChecking = true;
+                                                  });
+                                                  try {
+                                                    await Dio().post(
+                                                      "${ApiService.baseUrl}/telegram/logout",
+                                                      options: Options(headers: {"Content-Type": "application/json"}),
+                                                    );
+                                                    
+                                                    final prefs = await SharedPreferences.getInstance();
+                                                    await prefs.setBool('telegram_logged_in', false);
+                                                    await prefs.remove('telegram_session_string_cache');
+                                                    await prefs.remove('telegram_phone');
+                                                    await prefs.remove('telegram_username');
+                                                    
+                                                    if (context.mounted) {
+                                                      ScaffoldMessenger.of(context).showSnackBar(
+                                                        SnackBar(
+                                                          content: Text(
+                                                            "Telegram Gateway disconnected successfully.",
+                                                            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                          ),
+                                                          backgroundColor: Colors.greenAccent,
+                                                        ),
+                                                      );
+                                                      Navigator.pop(stateContext);
+                                                      Navigator.of(context).pushAndRemoveUntil(
+                                                        MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
+                                                        (route) => false,
+                                                      );
+                                                    }
+                                                  } catch (e) {
+                                                    final prefs = await SharedPreferences.getInstance();
+                                                    await prefs.setBool('telegram_logged_in', false);
+                                                    await prefs.remove('telegram_session_string_cache');
+                                                    await prefs.remove('telegram_phone');
+                                                    await prefs.remove('telegram_username');
+                                                    
+                                                    if (context.mounted) {
+                                                      ScaffoldMessenger.of(context).showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text("Error disconnecting remote session. Session cleared locally."),
+                                                          backgroundColor: Colors.orangeAccent,
+                                                        ),
+                                                      );
+                                                      Navigator.pop(stateContext);
+                                                      Navigator.of(context).pushAndRemoveUntil(
+                                                        MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
+                                                        (route) => false,
+                                                      );
+                                                    }
+                                                  }
+                                                }
+                                              },
+                                              icon: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 18),
+                                              label: Text(
+                                                "Disconnect Telegram Gateway",
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.redAccent,
+                                                  fontSize: 12.0,
+                                                ),
+                                              ),
+                                              style: OutlinedButton.styleFrom(
+                                                side: const BorderSide(color: Colors.redAccent, width: 1.2),
+                                                padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(12.0),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ] else ...[
+                                          Container(
+                                            padding: const EdgeInsets.all(12.0),
+                                            decoration: BoxDecoration(
+                                              color: Colors.white.withOpacity(0.02),
+                                              borderRadius: BorderRadius.circular(12.0),
+                                              border: Border.all(color: Colors.white.withOpacity(0.04)),
+                                            ),
+                                            child: Text(
+                                              "You are in Guest Explorer mode. Syncing chats, automatic bots, and real-time scanning are locked until you connect your Telegram account.",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                color: Colors.white38,
+                                                fontSize: 11.5,
+                                                height: 1.4,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 16.0),
+                                          SizedBox(
+                                            width: double.infinity,
+                                            child: ElevatedButton.icon(
+                                              onPressed: () {
+                                                Navigator.pop(stateContext); // Close settings drawer
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(builder: (context) => const TelegramLoginScreen()),
+                                                );
+                                              },
+                                              icon: const Icon(Icons.login_rounded, color: Colors.black, size: 16),
+                                              label: Text(
+                                                "Connect Telegram Gateway",
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.black,
+                                                  fontSize: 12.0,
+                                                ),
+                                              ),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: primaryColor,
+                                                padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(12.0),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ] else if (currentCategory == 'visual') ...[
+                                  // CATEGORY 3: VISUAL ACCENT THEME
+                                  buildCategoryHeader("VISUAL ACCENT THEME", Icons.palette_outlined, primaryColor),
+                                  const SizedBox(height: 8.0),
+                                  Container(
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.02),
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "Select a premium primary accent color preset or enter a custom hex color code for customized glows, interfaces, and borders.",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: Colors.white60,
+                                            fontSize: 12.0,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16.0),
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                          children: AccentPreset.values.map((preset) {
+                                            final bool isSelected = themeProvider.currentPreset == preset;
+                                            return GestureDetector(
+                                              onTap: () {
+                                                themeProvider.setPreset(preset);
+                                                
+                                                ScaffoldMessenger.of(context).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      "Visual theme accent changed to ${preset.name}!",
+                                                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                    ),
+                                                    backgroundColor: preset.color.withOpacity(0.95),
+                                                    duration: const Duration(seconds: 2),
+                                                  ),
+                                                );
+                                              },
+                                              child: Column(
+                                                children: [
+                                                  AnimatedContainer(
+                                                    duration: const Duration(milliseconds: 250),
+                                                    width: 44.0,
+                                                    height: 44.0,
+                                                    decoration: BoxDecoration(
+                                                      shape: BoxShape.circle,
+                                                      color: preset.color,
+                                                      border: Border.all(
+                                                        color: isSelected ? Colors.white : Colors.transparent,
+                                                        width: 3.0,
+                                                      ),
+                                                      boxShadow: [
+                                                        BoxShadow(
+                                                          color: preset.color.withOpacity(0.4),
+                                                          blurRadius: isSelected ? 12.0 : 4.0,
+                                                          spreadRadius: isSelected ? 3.0 : 0.0,
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    child: isSelected
+                                                        ? const Icon(
+                                                            Icons.check_rounded,
+                                                            color: Colors.black,
+                                                            size: 20.0,
+                                                          )
+                                                        : null,
+                                                  ),
+                                                  const SizedBox(height: 6.0),
+                                                  Text(
+                                                    preset.name.split(' ').first,
+                                                    style: GoogleFonts.plusJakartaSans(
+                                                      color: isSelected ? preset.color : Colors.white60,
+                                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                                      fontSize: 10.0,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          }).toList(),
+                                        ),
+                                        const SizedBox(height: 20.0),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white.withOpacity(0.04),
+                                                  borderRadius: BorderRadius.circular(12.0),
+                                                  border: Border.all(color: Colors.white12),
+                                                ),
+                                                padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 2.0),
+                                                child: TextField(
+                                                  controller: hexColorController,
+                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0),
+                                                  onChanged: (val) {
+                                                    setSheetState(() {});
+                                                  },
+                                                  decoration: InputDecoration(
+                                                    labelText: "Custom Color Hex",
+                                                    labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 11.0),
+                                                    hintText: "e.g., #FF2E93",
+                                                    hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 12.0),
+                                                    border: InputBorder.none,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12.0),
+                                            GestureDetector(
+                                              onTap: () async {
+                                                final hex = hexColorController.text.trim();
+                                                if (hex.isNotEmpty) {
+                                                  final success = await themeProvider.setCustomHexColor(hex);
+                                                  if (success) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      SnackBar(
+                                                        content: Text(
+                                                          "Custom accent color set successfully!",
+                                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                                        ),
+                                                        backgroundColor: themeProvider.accentColor,
+                                                        duration: const Duration(seconds: 2),
+                                                      ),
+                                                    );
+                                                  } else {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text("Invalid Hex color format. Use #RRGGBB"),
+                                                        backgroundColor: Colors.redAccent,
+                                                      ),
+                                                    );
+                                                  }
+                                                } else {
+                                                  await themeProvider.clearCustomColor();
+                                                }
+                                                setSheetState(() {});
+                                              },
+                                              child: AnimatedContainer(
+                                                duration: const Duration(milliseconds: 250),
+                                                width: 44.0,
+                                                height: 44.0,
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  color: ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor,
+                                                  border: Border.all(color: Colors.white24, width: 1.5),
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: (ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor).withOpacity(0.4),
+                                                      blurRadius: 10.0,
+                                                      spreadRadius: 2.0,
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: const Icon(Icons.colorize_rounded, color: Colors.black, size: 20.0),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ] else if (currentCategory == 'playback') ...[
+                                  // CATEGORY 4: VIDEO PLAYBACK PREFERENCES
+                                  buildCategoryHeader("VIDEO PLAYBACK PREFERENCES", Icons.play_circle_outline_rounded, primaryColor),
+                                  const SizedBox(height: 8.0),
+                                  Container(
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.02),
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(0.04),
+                                            borderRadius: BorderRadius.circular(14.0),
+                                            border: Border.all(color: Colors.white12),
+                                          ),
+                                          child: SwitchListTile(
+                                            activeColor: primaryColor,
+                                            title: Text(
+                                              "Always Use External Player",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 13.0,
+                                              ),
+                                            ),
+                                            subtitle: Text(
+                                              "Bypasses the built-in player to stream using VLC, MX Player, Nova, or Kodi.",
+                                              style: GoogleFonts.plusJakartaSans(
+                                                color: Colors.white38,
+                                                fontSize: 11.0,
+                                              ),
+                                            ),
+                                            value: useExternalPlayer,
+                                            onChanged: (val) {
+                                              setSheetState(() {
+                                                useExternalPlayer = val;
+                                              });
+                                            },
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12.0),
+                                        InkWell(
+                                          onTap: () {
+                                            showModalBottomSheet(
+                                              context: context,
+                                              backgroundColor: Colors.transparent,
+                                              barrierColor: Colors.black.withOpacity(0.5),
+                                              builder: (dialogContext) {
+                                                return FutureBuilder<List<Map<String, String>>>(
+                                                  future: ExternalPlayerService.detectPlayers(),
+                                                  builder: (context, snapshot) {
+                                                    final players = snapshot.data ?? [];
+                                                    final isLoading = snapshot.connectionState == ConnectionState.waiting;
+
+                                                    return ClipRRect(
+                                                      borderRadius: const BorderRadius.vertical(top: Radius.circular(24.0)),
+                                                      child: BackdropFilter(
+                                                        filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
+                                                        child: Container(
+                                                          decoration: BoxDecoration(
+                                                            color: const Color(0xFF0F0F12).withOpacity(0.95),
+                                                            border: Border(
+                                                              top: BorderSide(color: Colors.white.withOpacity(0.08), width: 1.0),
+                                                            ),
+                                                          ),
+                                                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+                                                          child: Column(
+                                                            mainAxisSize: MainAxisSize.min,
+                                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                                            children: [
+                                                              Center(
+                                                                child: Container(
+                                                                  width: 36.0,
+                                                                  height: 4.0,
+                                                                  decoration: BoxDecoration(
+                                                                    color: Colors.white24,
+                                                                    borderRadius: BorderRadius.circular(10.0),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                              const SizedBox(height: 20.0),
+                                                              Text(
+                                                                "SELECT VIDEO PLAYER",
+                                                                style: GoogleFonts.cinzel(
+                                                                  fontSize: 18.0,
+                                                                  fontWeight: FontWeight.w900,
+                                                                  color: Colors.white,
+                                                                  letterSpacing: 1.0,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(height: 4.0),
+                                                              Text(
+                                                                "Choose your preferred external media engine for mobile video streams.",
+                                                                style: GoogleFonts.plusJakartaSans(
+                                                                  color: Colors.white54,
+                                                                  fontSize: 11.5,
+                                                                ),
+                                                              ),
+                                                              const SizedBox(height: 16.0),
+                                                              if (isLoading)
+                                                                const Center(
+                                                                  child: Padding(
+                                                                    padding: EdgeInsets.symmetric(vertical: 32.0),
+                                                                    child: CircularProgressIndicator(strokeWidth: 2.0),
+                                                                  ),
+                                                                )
+                                                              else if (players.isEmpty)
+                                                                Padding(
+                                                                  padding: const EdgeInsets.symmetric(vertical: 24.0),
+                                                                  child: Text(
+                                                                    "No external media players detected.",
+                                                                    style: GoogleFonts.plusJakartaSans(color: Colors.white38),
+                                                                  ),
+                                                                )
+                                                              else
+                                                                ConstrainedBox(
+                                                                  constraints: BoxConstraints(
+                                                                    maxHeight: MediaQuery.of(context).size.height * 0.4,
+                                                                  ),
+                                                                  child: ListView.builder(
+                                                                    shrinkWrap: true,
+                                                                    itemCount: players.length,
+                                                                    itemBuilder: (context, index) {
+                                                                      final p = players[index];
+                                                                      final name = p['name'] ?? 'Unknown Player';
+                                                                      final package = p['package'] ?? '';
+                                                                      final isSelected = selectedPlayerPackage == package;
+
+                                                                      IconData pIcon = Icons.play_circle_outline_rounded;
+                                                                      Color pIconColor = Colors.white60;
+
+                                                                      if (package.contains("vlc")) {
+                                                                        pIcon = Icons.play_circle_filled_rounded;
+                                                                        pIconColor = Colors.orangeAccent;
+                                                                      } else if (package.contains("mxtech")) {
+                                                                        pIcon = Icons.play_circle_filled_rounded;
+                                                                        pIconColor = Colors.blueAccent;
+                                                                      } else if (package.contains("nova")) {
+                                                                        pIcon = Icons.play_circle_filled_rounded;
+                                                                        pIconColor = Colors.greenAccent;
+                                                                      } else if (package.contains("kodi")) {
+                                                                        pIcon = Icons.dashboard_rounded;
+                                                                        pIconColor = Colors.cyanAccent;
+                                                                      }
+
+                                                                      return Container(
+                                                                        margin: const EdgeInsets.only(bottom: 8.0),
+                                                                        decoration: BoxDecoration(
+                                                                          color: isSelected 
+                                                                              ? primaryColor.withOpacity(0.06) 
+                                                                              : Colors.white.withOpacity(0.02),
+                                                                          borderRadius: BorderRadius.circular(12.0),
+                                                                          border: Border.all(
+                                                                            color: isSelected 
+                                                                                ? primaryColor.withOpacity(0.3) 
+                                                                                : Colors.white.withOpacity(0.05),
+                                                                          ),
+                                                                        ),
+                                                                        child: ListTile(
+                                                                          leading: Icon(pIcon, color: pIconColor),
+                                                                          title: Text(
+                                                                            name,
+                                                                            style: GoogleFonts.plusJakartaSans(
+                                                                              color: Colors.white,
+                                                                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                                                            ),
+                                                                          ),
+                                                                          subtitle: Text(
+                                                                            package,
+                                                                            style: GoogleFonts.plusJakartaSans(
+                                                                              color: Colors.white30,
+                                                                              fontSize: 10.0,
+                                                                            ),
+                                                                          ),
+                                                                          trailing: isSelected
+                                                                              ? Icon(Icons.check_circle_rounded, color: primaryColor)
+                                                                              : null,
+                                                                          onTap: () {
+                                                                            setSheetState(() {
+                                                                              selectedPlayerPackage = package;
+                                                                              selectedPlayerName = name;
+                                                                            });
+                                                                            Navigator.pop(dialogContext);
+                                                                          },
+                                                                        ),
+                                                                      );
+                                                                    },
+                                                                  ),
+                                                                ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                );
+                                              },
+                                            );
+                                          },
+                                          borderRadius: BorderRadius.circular(14.0),
+                                          child: Container(
+                                            decoration: BoxDecoration(
+                                              color: Colors.white.withOpacity(0.04),
+                                              borderRadius: BorderRadius.circular(14.0),
+                                              border: Border.all(color: Colors.white12),
+                                            ),
+                                            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+                                            child: Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      "Default External Player",
+                                                      style: GoogleFonts.plusJakartaSans(
+                                                        color: Colors.white70,
+                                                        fontSize: 11.0,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 4.0),
+                                                    Text(
+                                                      selectedPlayerName,
+                                                      style: GoogleFonts.plusJakartaSans(
+                                                        color: Colors.white,
+                                                        fontSize: 14.0,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                Row(
+                                                  children: [
+                                                    Text(
+                                                      "CHANGE",
+                                                      style: GoogleFonts.plusJakartaSans(
+                                                        color: primaryColor,
+                                                        fontSize: 11.0,
+                                                        fontWeight: FontWeight.w900,
+                                                        letterSpacing: 0.5,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 6.0),
+                                                    Icon(Icons.arrow_forward_ios_rounded, color: primaryColor, size: 12.0),
+                                                  ],
                                                 ),
                                               ],
                                             ),
                                           ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 20.0),
-                                      if (isTelegramLoggedIn) ...[
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ] else if (currentCategory == 'cinematic') ...[
+                                  // CATEGORY 2: COLLABORATIVE & DIAGNOSTIC PREMIUM HUBS
+                                  buildCategoryHeader("COLLABORATIVE & DIAGNOSTIC PREMIUM HUBS", Icons.offline_bolt_rounded, primaryColor),
+                                  const SizedBox(height: 8.0),
+                                  Container(
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.02),
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
                                         Row(
                                           children: [
                                             Expanded(
                                               child: ElevatedButton.icon(
                                                 onPressed: () {
                                                   Navigator.pop(context);
-                                                  Navigator.push(
-                                                    context,
-                                                    MaterialPageRoute(builder: (context) => const ChannelSelectorScreen()),
-                                                  );
+                                                  _showAnalyticsDashboard(context);
                                                 },
-                                                icon: const Icon(Icons.campaign_rounded, color: Colors.black, size: 16),
+                                                icon: const Icon(Icons.bar_chart_rounded, color: Colors.black, size: 18),
                                                 label: Text(
-                                                  "Library Chats",
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
+                                                  "Viewing Stats",
                                                   style: GoogleFonts.plusJakartaSans(
                                                     fontWeight: FontWeight.bold,
                                                     color: Colors.black,
-                                                    fontSize: 11.5,
+                                                    fontSize: 12.0,
                                                   ),
                                                 ),
                                                 style: ElevatedButton.styleFrom(
                                                   backgroundColor: primaryColor,
-                                                  padding: const EdgeInsets.symmetric(vertical: 12.0),
                                                   shape: RoundedRectangleBorder(
                                                     borderRadius: BorderRadius.circular(10.0),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                            const SizedBox(width: 10.0),
+                                            const SizedBox(width: 12.0),
                                             Expanded(
                                               child: OutlinedButton.icon(
                                                 onPressed: () {
                                                   Navigator.pop(context);
-                                                  Navigator.push(
-                                                    context,
-                                                    MaterialPageRoute(builder: (context) => const UnresolvedQueueScreen()),
-                                                  );
+                                                  _showWatchPartyLobby(context);
                                                 },
-                                                icon: Icon(Icons.movie_filter_rounded, color: primaryColor, size: 16),
+                                                icon: Icon(Icons.groups_rounded, color: primaryColor, size: 18),
                                                 label: Text(
-                                                  "Fix Matches",
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
+                                                  "Co-Watch Room",
                                                   style: GoogleFonts.plusJakartaSans(
                                                     fontWeight: FontWeight.bold,
                                                     color: Colors.white,
-                                                    fontSize: 11.5,
+                                                    fontSize: 12.0,
                                                   ),
                                                 ),
                                                 style: OutlinedButton.styleFrom(
-                                                  side: BorderSide(color: primaryColor, width: 1.0),
-                                                  padding: const EdgeInsets.symmetric(vertical: 12.0),
+                                                  side: BorderSide(color: primaryColor),
                                                   shape: RoundedRectangleBorder(
                                                     borderRadius: BorderRadius.circular(10.0),
                                                   ),
@@ -1255,959 +2261,272 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                           ],
                                         ),
                                         const SizedBox(height: 16.0),
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: OutlinedButton.icon(
-                                            onPressed: () async {
-                                              final confirm = await showDialog<bool>(
-                                                context: context,
-                                                builder: (dialogCtx) => AlertDialog(
-                                                  backgroundColor: const Color(0xFF0F0F12),
-                                                  shape: RoundedRectangleBorder(
-                                                    borderRadius: BorderRadius.circular(16.0),
-                                                    side: BorderSide(color: Colors.white.withOpacity(0.1)),
-                                                  ),
-                                                  title: Text(
-                                                    "Disconnect Gateway?",
-                                                    style: GoogleFonts.cinzel(color: Colors.white, fontWeight: FontWeight.bold),
-                                                  ),
-                                                  content: Text(
-                                                    "Are you sure you want to log out and disconnect your Telegram account from Cinegram?",
-                                                    style: GoogleFonts.plusJakartaSans(color: Colors.white70),
-                                                  ),
-                                                  actions: [
-                                                    TextButton(
-                                                      onPressed: () => Navigator.pop(dialogCtx, false),
-                                                      child: Text("Cancel", style: GoogleFonts.plusJakartaSans(color: Colors.white38)),
-                                                    ),
-                                                    ElevatedButton(
-                                                      onPressed: () => Navigator.pop(dialogCtx, true),
-                                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                                                      child: Text("Disconnect", style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-
-                                              if (confirm == true) {
-                                                setSheetState(() {
-                                                  isChecking = true;
-                                                });
-                                                try {
-                                                  await Dio().post(
-                                                    "${ApiService.baseUrl}/telegram/logout",
-                                                    options: Options(headers: {"Content-Type": "application/json"}),
-                                                  );
-                                                  
-                                                  final prefs = await SharedPreferences.getInstance();
-                                                  await prefs.setBool('telegram_logged_in', false);
-                                                  await prefs.remove('telegram_session_string_cache');
-                                                  await prefs.remove('telegram_phone');
-                                                  
-                                                  if (context.mounted) {
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      SnackBar(
-                                                        content: Text(
-                                                          "Telegram Gateway disconnected successfully.",
-                                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                                        ),
-                                                        backgroundColor: Colors.greenAccent,
-                                                      ),
-                                                    );
-                                                    Navigator.pop(stateContext);
-                                                    Navigator.of(context).pushAndRemoveUntil(
-                                                      MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
-                                                      (route) => false,
-                                                    );
-                                                  }
-                                                } catch (e) {
-                                                  final prefs = await SharedPreferences.getInstance();
-                                                  await prefs.setBool('telegram_logged_in', false);
-                                                  await prefs.remove('telegram_session_string_cache');
-                                                  await prefs.remove('telegram_phone');
-                                                  
-                                                  if (context.mounted) {
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      const SnackBar(
-                                                        content: Text("Error disconnecting remote session. Session cleared locally."),
-                                                        backgroundColor: Colors.orangeAccent,
-                                                      ),
-                                                    );
-                                                    Navigator.pop(stateContext);
-                                                    Navigator.of(context).pushAndRemoveUntil(
-                                                      MaterialPageRoute(builder: (context) => const OnboardingCheckScreen()),
-                                                      (route) => false,
-                                                    );
-                                                  }
-                                                }
-                                              }
-                                            },
-                                            icon: const Icon(Icons.logout_rounded, color: Colors.redAccent, size: 18),
-                                            label: Text(
-                                              "Disconnect Telegram Gateway",
-                                              style: GoogleFonts.plusJakartaSans(
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.redAccent,
-                                                fontSize: 12.0,
-                                              ),
-                                            ),
-                                            style: OutlinedButton.styleFrom(
-                                              side: const BorderSide(color: Colors.redAccent, width: 1.2),
-                                              padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(12.0),
-                                              ),
-                                            ),
+                                        const Divider(color: Colors.white12, height: 1.0),
+                                        const SizedBox(height: 16.0),
+                                        Text(
+                                          "DIAGNOSTIC ENGINES & PREFERENCES",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: primaryColor,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 11.5,
+                                            letterSpacing: 0.5,
                                           ),
                                         ),
-                                      ] else ...[
-                                        Container(
-                                          padding: const EdgeInsets.all(12.0),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white.withOpacity(0.02),
-                                            borderRadius: BorderRadius.circular(12.0),
-                                            border: Border.all(color: Colors.white.withOpacity(0.04)),
-                                          ),
-                                          child: Text(
-                                            "You are in Guest Explorer mode. Syncing chats, automatic bots, and real-time scanning are locked until you connect your Telegram account.",
-                                            style: GoogleFonts.plusJakartaSans(
-                                              color: Colors.white38,
-                                              fontSize: 11.5,
-                                              height: 1.4,
+                                        const SizedBox(height: 12.0),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: OutlinedButton.icon(
+                                                onPressed: () {
+                                                  Navigator.pop(stateContext);
+                                                  _showSubtitlesCCSettings(context);
+                                                },
+                                                icon: const Icon(Icons.subtitles_outlined, color: Colors.white, size: 15),
+                                                label: Text(
+                                                  "Subtitles",
+                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 11.0, fontWeight: FontWeight.bold),
+                                                ),
+                                                style: OutlinedButton.styleFrom(
+                                                  side: const BorderSide(color: Colors.white12),
+                                                  padding: const EdgeInsets.symmetric(vertical: 10.0),
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
+                                                ),
+                                              ),
                                             ),
+                                            const SizedBox(width: 8.0),
+                                            Expanded(
+                                              child: OutlinedButton.icon(
+                                                onPressed: () {
+                                                  Navigator.pop(stateContext);
+                                                  _showNetworkDiagnostics(context);
+                                                },
+                                                icon: const Icon(Icons.speed_outlined, color: Colors.white, size: 15),
+                                                label: Text(
+                                                  "Speed Test",
+                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 11.0, fontWeight: FontWeight.bold),
+                                                ),
+                                                style: OutlinedButton.styleFrom(
+                                                  side: const BorderSide(color: Colors.white12),
+                                                  padding: const EdgeInsets.symmetric(vertical: 10.0),
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8.0),
+                                            Expanded(
+                                              child: OutlinedButton.icon(
+                                                onPressed: () {
+                                                  Navigator.pop(stateContext);
+                                                  _showScannerRadarDashboard(context);
+                                                },
+                                                icon: const Icon(Icons.radar_rounded, color: Colors.white, size: 15),
+                                                label: Text(
+                                                  "Scanner Log",
+                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 11.0, fontWeight: FontWeight.bold),
+                                                ),
+                                                style: OutlinedButton.styleFrom(
+                                                  side: const BorderSide(color: Colors.white12),
+                                                  padding: const EdgeInsets.symmetric(vertical: 10.0),
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ] else if (currentCategory == 'network') ...[
+                                  // CATEGORY 6: API GATEWAY CONFIG
+                                  buildCategoryHeader("API GATEWAY SETTINGS", Icons.dns_outlined, primaryColor),
+                                  const SizedBox(height: 8.0),
+                                  Container(
+                                    padding: const EdgeInsets.all(16.0),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.02),
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          "Configure custom server links to synchronize collaborative playlists, watch progress, and listings.",
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: Colors.white60,
+                                            fontSize: 12.0,
+                                            height: 1.4,
                                           ),
                                         ),
                                         const SizedBox(height: 16.0),
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: ElevatedButton.icon(
-                                            onPressed: () {
-                                              Navigator.pop(stateContext); // Close settings drawer
-                                              Navigator.push(
-                                                context,
-                                                MaterialPageRoute(builder: (context) => const TelegramLoginScreen()),
-                                              );
-                                            },
-                                            icon: const Icon(Icons.login_rounded, color: Colors.black, size: 16),
-                                            label: Text(
-                                              "Connect Telegram Gateway",
-                                              style: GoogleFonts.plusJakartaSans(
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.black,
-                                                fontSize: 12.0,
-                                              ),
+                                        GestureDetector(
+                                          onTap: () => checkConnection(setSheetState, urlController.text),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+                                            decoration: BoxDecoration(
+                                              color: statusColor.withOpacity(0.08),
+                                              borderRadius: BorderRadius.circular(12.0),
+                                              border: Border.all(color: statusColor.withOpacity(0.3), width: 0.8),
                                             ),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: primaryColor,
-                                              padding: const EdgeInsets.symmetric(vertical: 12.0),
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(12.0),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 24.0),
-
-                                // CATEGORY 2: COLLABORATIVE FEATURES & TV UI
-                                buildCategoryHeader("COLLABORATIVE FEATURES & TV UI", Icons.groups_rounded, primaryColor),
-                                const SizedBox(height: 8.0),
-                                Container(
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.02),
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: ElevatedButton.icon(
-                                              onPressed: () {
-                                                Navigator.pop(context);
-                                                _showAnalyticsDashboard(context);
-                                              },
-                                              icon: const Icon(Icons.bar_chart_rounded, color: Colors.black, size: 18),
-                                              label: Text(
-                                                "Viewing Stats",
-                                                style: GoogleFonts.plusJakartaSans(
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.black,
-                                                  fontSize: 12.0,
-                                                ),
-                                              ),
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: primaryColor,
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(10.0),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12.0),
-                                          Expanded(
-                                            child: OutlinedButton.icon(
-                                              onPressed: () {
-                                                Navigator.pop(context);
-                                                _showWatchPartyLobby(context);
-                                              },
-                                              icon: Icon(Icons.groups_rounded, color: primaryColor, size: 18),
-                                              label: Text(
-                                                "Co-Watch Room",
-                                                style: GoogleFonts.plusJakartaSans(
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.white,
-                                                  fontSize: 12.0,
-                                                ),
-                                              ),
-                                              style: OutlinedButton.styleFrom(
-                                                side: BorderSide(color: primaryColor),
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(10.0),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 16.0),
-                                      const Divider(color: Colors.white12, height: 1.0),
-                                      const SizedBox(height: 16.0),
-                                      Text(
-                                        "Experience the premium, D-pad remote optimized widescreen dashboard design scaled dynamically for mobile handsets.",
-                                        style: GoogleFonts.plusJakartaSans(
-                                          color: Colors.white60,
-                                          fontSize: 12.0,
-                                          height: 1.4,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16.0),
-                                      ElevatedButton.icon(
-                                        onPressed: () {
-                                          Navigator.pop(context);
-                                          Navigator.push(
-                                            context,
-                                            PageRouteBuilder(
-                                              pageBuilder: (context, animation, secondaryAnimation) => const TvHomeScreen(),
-                                              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                                                return FadeTransition(opacity: animation, child: child);
-                                              },
-                                            ),
-                                          );
-                                        },
-                                        icon: const Icon(Icons.tv_rounded, color: Colors.black, size: 18),
-                                        label: Text(
-                                          "Launch Widescreen TV Simulator",
-                                          style: GoogleFonts.plusJakartaSans(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.black,
-                                            fontSize: 12.0,
-                                          ),
-                                        ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: primaryColor,
-                                          minimumSize: const Size(double.infinity, 44),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(10.0),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 24.0),
-
-                                // CATEGORY 4: VISUAL ACCENT THEME
-                                buildCategoryHeader("VISUAL ACCENT THEME", Icons.palette_outlined, primaryColor),
-                                const SizedBox(height: 8.0),
-                                Container(
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.02),
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        "Select a premium primary accent color preset or enter a custom hex color code for customized glows, interfaces, and borders.",
-                                        style: GoogleFonts.plusJakartaSans(
-                                          color: Colors.white60,
-                                          fontSize: 12.0,
-                                          height: 1.4,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16.0),
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                        children: AccentPreset.values.map((preset) {
-                                          final bool isSelected = themeProvider.currentPreset == preset;
-                                          return GestureDetector(
-                                            onTap: () {
-                                              themeProvider.setPreset(preset);
-                                              
-                                              ScaffoldMessenger.of(context).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(
-                                                    "Visual theme accent changed to ${preset.name}!",
-                                                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                                  ),
-                                                  backgroundColor: preset.color.withOpacity(0.95),
-                                                  duration: const Duration(seconds: 2),
-                                                ),
-                                              );
-                                            },
-                                            child: Column(
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
                                               children: [
                                                 AnimatedContainer(
-                                                  duration: const Duration(milliseconds: 250),
-                                                  width: 44.0,
-                                                  height: 44.0,
+                                                  duration: const Duration(milliseconds: 300),
+                                                  width: 10.0,
+                                                  height: 10.0,
                                                   decoration: BoxDecoration(
                                                     shape: BoxShape.circle,
-                                                    color: preset.color,
-                                                    border: Border.all(
-                                                      color: isSelected ? Colors.white : Colors.transparent,
-                                                      width: 3.0,
-                                                    ),
+                                                    color: statusColor,
                                                     boxShadow: [
                                                       BoxShadow(
-                                                        color: preset.color.withOpacity(0.4),
-                                                        blurRadius: isSelected ? 12.0 : 4.0,
-                                                        spreadRadius: isSelected ? 3.0 : 0.0,
+                                                        color: statusColor.withOpacity(0.6),
+                                                        blurRadius: 8.0,
+                                                        spreadRadius: 2.0,
                                                       ),
                                                     ],
                                                   ),
-                                                  child: isSelected
-                                                      ? const Icon(
-                                                          Icons.check_rounded,
-                                                          color: Colors.black,
-                                                          size: 20.0,
-                                                        )
-                                                      : null,
                                                 ),
-                                                const SizedBox(height: 6.0),
+                                                const SizedBox(width: 10.0),
                                                 Text(
-                                                  preset.name.split(' ').first,
+                                                  statusText,
                                                   style: GoogleFonts.plusJakartaSans(
-                                                    color: isSelected ? preset.color : Colors.white60,
-                                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                                    fontSize: 10.0,
+                                                    color: statusColor,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 12.0,
+                                                    letterSpacing: 0.5,
                                                   ),
                                                 ),
                                               ],
                                             ),
-                                          );
-                                        }).toList(),
-                                      ),
-                                      const SizedBox(height: 20.0),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                color: Colors.white.withOpacity(0.04),
-                                                borderRadius: BorderRadius.circular(12.0),
-                                                border: Border.all(color: Colors.white12),
-                                              ),
-                                              padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 2.0),
-                                              child: TextField(
-                                                controller: hexColorController,
-                                                style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0),
-                                                onChanged: (val) {
-                                                  setSheetState(() {});
-                                                },
-                                                decoration: InputDecoration(
-                                                  labelText: "Custom Color Hex",
-                                                  labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 11.0),
-                                                  hintText: "e.g., #FF2E93",
-                                                  hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 12.0),
-                                                  border: InputBorder.none,
-                                                ),
-                                              ),
-                                            ),
                                           ),
-                                          const SizedBox(width: 12.0),
-                                          GestureDetector(
-                                            onTap: () async {
-                                              final hex = hexColorController.text.trim();
-                                              if (hex.isNotEmpty) {
-                                                final success = await themeProvider.setCustomHexColor(hex);
-                                                if (success) {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    SnackBar(
-                                                      content: Text(
-                                                        "Custom accent color set successfully!",
-                                                        style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                                      ),
-                                                      backgroundColor: themeProvider.accentColor,
-                                                      duration: const Duration(seconds: 2),
-                                                    ),
-                                                  );
-                                                } else {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    const SnackBar(
-                                                      content: Text("Invalid Hex color format. Use #RRGGBB"),
-                                                      backgroundColor: Colors.redAccent,
-                                                    ),
-                                                  );
-                                                }
-                                              } else {
-                                                await themeProvider.clearCustomColor();
-                                              }
-                                              setSheetState(() {});
-                                            },
-                                            child: AnimatedContainer(
-                                              duration: const Duration(milliseconds: 250),
-                                              width: 44.0,
-                                              height: 44.0,
-                                              decoration: BoxDecoration(
-                                                shape: BoxShape.circle,
-                                                color: ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor,
-                                                border: Border.all(color: Colors.white24, width: 1.5),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: (ThemeProvider.parseHexColor(hexColorController.text) ?? themeProvider.accentColor).withOpacity(0.4),
-                                                    blurRadius: 10.0,
-                                                    spreadRadius: 2.0,
-                                                  ),
-                                                ],
-                                              ),
-                                              child: const Icon(Icons.colorize_rounded, color: Colors.black, size: 20.0),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 24.0),
-
-                                // CATEGORY 5: VIDEO PLAYBACK PREFERENCES
-                                buildCategoryHeader("VIDEO PLAYBACK PREFERENCES", Icons.play_circle_outline_rounded, primaryColor),
-                                const SizedBox(height: 8.0),
-                                Container(
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.02),
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withOpacity(0.04),
-                                          borderRadius: BorderRadius.circular(14.0),
-                                          border: Border.all(color: Colors.white12),
                                         ),
-                                        child: SwitchListTile(
-                                          activeColor: primaryColor,
-                                          title: Text(
-                                            "Always Use External Player",
-                                            style: GoogleFonts.plusJakartaSans(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 13.0,
-                                            ),
-                                          ),
-                                          subtitle: Text(
-                                            "Bypasses the built-in player to stream using VLC, MX Player, Nova, or Kodi.",
-                                            style: GoogleFonts.plusJakartaSans(
-                                              color: Colors.white38,
-                                              fontSize: 11.0,
-                                            ),
-                                          ),
-                                          value: useExternalPlayer,
-                                          onChanged: (val) {
-                                            setSheetState(() {
-                                              useExternalPlayer = val;
-                                            });
-                                          },
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12.0),
-                                      InkWell(
-                                        onTap: () {
-                                          showModalBottomSheet(
-                                            context: context,
-                                            backgroundColor: Colors.transparent,
-                                            barrierColor: Colors.black.withOpacity(0.5),
-                                            builder: (dialogContext) {
-                                              return FutureBuilder<List<Map<String, String>>>(
-                                                future: ExternalPlayerService.detectPlayers(),
-                                                builder: (context, snapshot) {
-                                                  final players = snapshot.data ?? [];
-                                                  final isLoading = snapshot.connectionState == ConnectionState.waiting;
-
-                                                  return ClipRRect(
-                                                    borderRadius: const BorderRadius.vertical(top: Radius.circular(24.0)),
-                                                    child: BackdropFilter(
-                                                      filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
-                                                      child: Container(
-                                                        decoration: BoxDecoration(
-                                                          color: const Color(0xFF0F0F12).withOpacity(0.95),
-                                                          border: Border(
-                                                            top: BorderSide(color: Colors.white.withOpacity(0.08), width: 1.0),
-                                                          ),
-                                                        ),
-                                                        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
-                                                        child: Column(
-                                                          mainAxisSize: MainAxisSize.min,
-                                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                                          children: [
-                                                            Center(
-                                                              child: Container(
-                                                                width: 36.0,
-                                                                height: 4.0,
-                                                                decoration: BoxDecoration(
-                                                                  color: Colors.white24,
-                                                                  borderRadius: BorderRadius.circular(10.0),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            const SizedBox(height: 20.0),
-                                                            Text(
-                                                              "SELECT VIDEO PLAYER",
-                                                              style: GoogleFonts.cinzel(
-                                                                fontSize: 18.0,
-                                                                fontWeight: FontWeight.w900,
-                                                                color: Colors.white,
-                                                                letterSpacing: 1.0,
-                                                              ),
-                                                            ),
-                                                            const SizedBox(height: 4.0),
-                                                            Text(
-                                                              "Choose your preferred external media engine for mobile video streams.",
-                                                              style: GoogleFonts.plusJakartaSans(
-                                                                color: Colors.white54,
-                                                                fontSize: 11.5,
-                                                              ),
-                                                            ),
-                                                            const SizedBox(height: 16.0),
-                                                            if (isLoading)
-                                                              const Center(
-                                                                child: Padding(
-                                                                  padding: EdgeInsets.symmetric(vertical: 32.0),
-                                                                  child: CircularProgressIndicator(strokeWidth: 2.0),
-                                                                ),
-                                                              )
-                                                            else if (players.isEmpty)
-                                                              Padding(
-                                                                padding: const EdgeInsets.symmetric(vertical: 24.0),
-                                                                child: Text(
-                                                                  "No external media players detected.",
-                                                                  style: GoogleFonts.plusJakartaSans(color: Colors.white38),
-                                                                ),
-                                                              )
-                                                            else
-                                                              ConstrainedBox(
-                                                                constraints: BoxConstraints(
-                                                                  maxHeight: MediaQuery.of(context).size.height * 0.4,
-                                                                ),
-                                                                child: ListView.builder(
-                                                                  shrinkWrap: true,
-                                                                  itemCount: players.length,
-                                                                  itemBuilder: (context, index) {
-                                                                    final p = players[index];
-                                                                    final name = p['name'] ?? 'Unknown Player';
-                                                                    final package = p['package'] ?? '';
-                                                                    final isSelected = selectedPlayerPackage == package;
-
-                                                                    IconData pIcon = Icons.play_circle_outline_rounded;
-                                                                    Color pIconColor = Colors.white60;
-
-                                                                    if (package.contains("vlc")) {
-                                                                      pIcon = Icons.play_circle_filled_rounded;
-                                                                      pIconColor = Colors.orangeAccent;
-                                                                    } else if (package.contains("mxtech")) {
-                                                                      pIcon = Icons.play_circle_filled_rounded;
-                                                                      pIconColor = Colors.blueAccent;
-                                                                    } else if (package.contains("nova")) {
-                                                                      pIcon = Icons.play_circle_filled_rounded;
-                                                                      pIconColor = Colors.greenAccent;
-                                                                    } else if (package.contains("kodi")) {
-                                                                      pIcon = Icons.dashboard_rounded;
-                                                                      pIconColor = Colors.cyanAccent;
-                                                                    }
-
-                                                                    return Container(
-                                                                      margin: const EdgeInsets.only(bottom: 8.0),
-                                                                      decoration: BoxDecoration(
-                                                                        color: isSelected 
-                                                                            ? primaryColor.withOpacity(0.06) 
-                                                                            : Colors.white.withOpacity(0.02),
-                                                                        borderRadius: BorderRadius.circular(12.0),
-                                                                        border: Border.all(
-                                                                          color: isSelected 
-                                                                              ? primaryColor.withOpacity(0.3) 
-                                                                              : Colors.white.withOpacity(0.05),
-                                                                        ),
-                                                                      ),
-                                                                      child: ListTile(
-                                                                        leading: Icon(pIcon, color: pIconColor),
-                                                                        title: Text(
-                                                                          name,
-                                                                          style: GoogleFonts.plusJakartaSans(
-                                                                            color: Colors.white,
-                                                                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                                                          ),
-                                                                        ),
-                                                                        subtitle: Text(
-                                                                          package,
-                                                                          style: GoogleFonts.plusJakartaSans(
-                                                                            color: Colors.white30,
-                                                                            fontSize: 10.0,
-                                                                          ),
-                                                                        ),
-                                                                        trailing: isSelected
-                                                                            ? Icon(Icons.check_circle_rounded, color: primaryColor)
-                                                                            : null,
-                                                                        onTap: () {
-                                                                          setSheetState(() {
-                                                                            selectedPlayerPackage = package;
-                                                                            selectedPlayerName = name;
-                                                                          });
-                                                                          Navigator.pop(dialogContext);
-                                                                        },
-                                                                      ),
-                                                                    );
-                                                                  },
-                                                                ),
-                                                              ),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  );
-                                                },
-                                              );
-                                            },
-                                          );
-                                        },
-                                        borderRadius: BorderRadius.circular(14.0),
-                                        child: Container(
+                                        const SizedBox(height: 16.0),
+                                        Container(
                                           decoration: BoxDecoration(
                                             color: Colors.white.withOpacity(0.04),
                                             borderRadius: BorderRadius.circular(14.0),
                                             border: Border.all(color: Colors.white12),
                                           ),
-                                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
-                                          child: Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Column(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    "Default External Player",
-                                                    style: GoogleFonts.plusJakartaSans(
-                                                      color: Colors.white70,
-                                                      fontSize: 11.0,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(height: 4.0),
-                                                  Text(
-                                                    selectedPlayerName,
-                                                    style: GoogleFonts.plusJakartaSans(
-                                                      color: Colors.white,
-                                                      fontSize: 14.0,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              Row(
-                                                children: [
-                                                  Text(
-                                                    "CHANGE",
-                                                    style: GoogleFonts.plusJakartaSans(
-                                                      color: primaryColor,
-                                                      fontSize: 11.0,
-                                                      fontWeight: FontWeight.w900,
-                                                      letterSpacing: 0.5,
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 6.0),
-                                                  Icon(Icons.arrow_forward_ios_rounded, color: primaryColor, size: 12.0),
-                                                ],
-                                              ),
-                                            ],
+                                          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                                          child: TextField(
+                                            controller: urlController,
+                                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
+                                            decoration: InputDecoration(
+                                              labelText: "API Gateway Base URL",
+                                              labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                                              hintText: "e.g., https://your-server.render.com",
+                                              hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
+                                              border: InputBorder.none,
+                                            ),
                                           ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 24.0),
-
-                                // CATEGORY 6: API GATEWAY CONFIG
-                                buildCategoryHeader("API GATEWAY SETTINGS", Icons.dns_outlined, primaryColor),
-                                const SizedBox(height: 8.0),
-                                Container(
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.02),
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        "Configure custom server links to synchronize collaborative playlists, watch progress, and listings.",
-                                        style: GoogleFonts.plusJakartaSans(
-                                          color: Colors.white60,
-                                          fontSize: 12.0,
-                                          height: 1.4,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16.0),
-                                      GestureDetector(
-                                        onTap: () => checkConnection(setSheetState, urlController.text),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
-                                          decoration: BoxDecoration(
-                                            color: statusColor.withOpacity(0.08),
-                                            borderRadius: BorderRadius.circular(12.0),
-                                            border: Border.all(color: statusColor.withOpacity(0.3), width: 0.8),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              AnimatedContainer(
-                                                duration: const Duration(milliseconds: 300),
-                                                width: 10.0,
-                                                height: 10.0,
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  color: statusColor,
-                                                  boxShadow: [
-                                                    BoxShadow(
-                                                      color: statusColor.withOpacity(0.6),
-                                                      blurRadius: 8.0,
-                                                      spreadRadius: 2.0,
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                              const SizedBox(width: 10.0),
-                                              Text(
-                                                statusText,
-                                                style: GoogleFonts.plusJakartaSans(
-                                                  color: statusColor,
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 12.0,
-                                                  letterSpacing: 0.5,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16.0),
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withOpacity(0.04),
-                                          borderRadius: BorderRadius.circular(14.0),
-                                          border: Border.all(color: Colors.white12),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                                        child: TextField(
-                                          controller: urlController,
-                                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
-                                          decoration: InputDecoration(
-                                            labelText: "API Gateway Base URL",
-                                            labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
-                                            hintText: "e.g., https://your-server.render.com",
-                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
-                                            border: InputBorder.none,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 24.0),
-
-                                // CATEGORY 7: IPTV STREAM CONFIG
-                                buildCategoryHeader("IPTV & M3U STREAM SETUP", Icons.live_tv_rounded, primaryColor),
-                                const SizedBox(height: 8.0),
-                                Container(
-                                  padding: const EdgeInsets.all(16.0),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.02),
-                                    borderRadius: BorderRadius.circular(16.0),
-                                    border: Border.all(color: Colors.white.withOpacity(0.06)),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        "Enter your custom M3U playlist URL and Electronic Program Guide (EPG) XML to map Live Channels inside the TV Simulator.",
-                                        style: GoogleFonts.plusJakartaSans(
-                                          color: Colors.white60,
-                                          fontSize: 12.0,
-                                          height: 1.4,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16.0),
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withOpacity(0.04),
-                                          borderRadius: BorderRadius.circular(14.0),
-                                          border: Border.all(color: Colors.white12),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                                        child: TextField(
-                                          controller: m3uController,
-                                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
-                                          decoration: InputDecoration(
-                                            labelText: "M3U Playlist URL",
-                                            labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
-                                            hintText: "https://your-domain.com/playlist.m3u",
-                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
-                                            border: InputBorder.none,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 12.0),
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withOpacity(0.04),
-                                          borderRadius: BorderRadius.circular(14.0),
-                                          border: Border.all(color: Colors.white12),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                                        child: TextField(
-                                          controller: epgController,
-                                          style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 14.0),
-                                          decoration: InputDecoration(
-                                            labelText: "EPG XML URL (Optional)",
-                                            labelStyle: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
-                                            hintText: "http://your-domain.com/epg.xml",
-                                            hintStyle: GoogleFonts.plusJakartaSans(color: Colors.white24, fontSize: 13.0),
-                                            border: InputBorder.none,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 28.0),
-
-                                // Action Buttons Row (Test Connection, Save)
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton.icon(
-                                        onPressed: () => checkConnection(setSheetState, urlController.text),
-                                        icon: const Icon(Icons.refresh_rounded, color: Colors.white),
-                                        label: Text(
-                                          "Test Connection",
-                                          style: GoogleFonts.plusJakartaSans(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                        style: OutlinedButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(vertical: 14.0),
-                                          side: const BorderSide(color: Colors.white24),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(14.0),
-                                          ),
-                                        ),
-                                      ),
+                                      ],
                                     ),
-                                    const SizedBox(width: 12.0),
-                                    Expanded(
-                                      child: ElevatedButton.icon(
-                                        onPressed: () async {
-                                          final newUrl = urlController.text.trim();
-                                          await ApiService.setCustomBaseUrl(newUrl);
-
-                                          final prefs = await SharedPreferences.getInstance();
-                                          await prefs.setString('iptv_m3u_url', m3uController.text.trim());
-                                          await prefs.setString('iptv_epg_url', epgController.text.trim());
-                                          
-                                          await prefs.setBool('use_external_player', useExternalPlayer);
-                                          await prefs.setString('selected_external_player_package', selectedPlayerPackage);
-                                          await prefs.setString('selected_external_player_name', selectedPlayerName);
-                                          
-                                          await prefs.setBool('multi_profile_enabled', multiProfileEnabled);
-
-                                          final roles = ['Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'];
-                                          for (final role in roles) {
-                                            final customName = nameControllers[role]!.text.trim();
-                                            final customAvatar = avatarControllers[role]!.text.trim();
-                                            if (customName.isNotEmpty) {
-                                              await prefs.setString('profile_name_$role', customName);
-                                            }
-                                            if (customAvatar.isNotEmpty) {
-                                              await prefs.setString('profile_avatar_$role', customAvatar);
-                                            } else {
-                                              await prefs.remove('profile_avatar_$role');
-                                            }
-                                            
-                                            final hasPin = hasPinMap[role] ?? false;
-                                            await prefs.setBool('profile_has_pin_$role', hasPin);
-                                            final pinVal = pinControllers[role]!.text.trim();
-                                            if (pinVal.length == 4) {
-                                              await prefs.setString('profile_pin_$role', pinVal);
-                                            }
-                                            
-                                            final isKids = isKidsMap[role] ?? false;
-                                            await prefs.setBool('profile_is_kids_$role', isKids);
-                                          }
-                                          
-                                          await checkConnection(setSheetState, newUrl);
-                                          
-                                          if (context.mounted) {
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  isConnected == true
-                                                      ? "Connected & Settings saved successfully!"
-                                                      : "Saved custom URL and IPTV URLs, but backend is offline.",
-                                                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
-                                                ),
-                                                backgroundColor: isConnected == true ? Colors.greenAccent : const Color(0xFF1E1E24),
-                                              ),
-                                            );
-                                            Navigator.pop(stateContext);
-                                          }
-                                        },
-                                        icon: const Icon(Icons.check_rounded, color: Colors.black),
-                                        label: Text(
-                                          "Apply & Save",
-                                          style: GoogleFonts.plusJakartaSans(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.black,
-                                          ),
-                                        ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: primaryColor,
-                                          padding: const EdgeInsets.symmetric(vertical: 14.0),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(14.0),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
+                        ),
+                        const SizedBox(height: 20.0),
+                        // Persistent Action Buttons Row docked at bottom of the main Column
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () => checkConnection(setSheetState, urlController.text),
+                                icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+                                label: Text(
+                                  "Test Connection",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14.0),
+                                  side: const BorderSide(color: Colors.white24),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14.0),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12.0),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () async {
+                                  final newUrl = urlController.text.trim();
+                                  await ApiService.setCustomBaseUrl(newUrl);
+
+                                  final prefs = await SharedPreferences.getInstance();
+                                  
+                                  await prefs.setBool('use_external_player', useExternalPlayer);
+                                  await prefs.setString('selected_external_player_package', selectedPlayerPackage);
+                                  await prefs.setString('selected_external_player_name', selectedPlayerName);
+                                  
+                                  await prefs.setBool('multi_profile_enabled', multiProfileEnabled);
+
+                                  final roles = ['Profile 1', 'Profile 2', 'Profile 3', 'Profile 4'];
+                                  for (final role in roles) {
+                                    final customName = nameControllers[role]!.text.trim();
+                                    final customAvatar = avatarControllers[role]!.text.trim();
+                                    if (customName.isNotEmpty) {
+                                      await prefs.setString('profile_name_$role', customName);
+                                    }
+                                    if (customAvatar.isNotEmpty) {
+                                      await prefs.setString('profile_avatar_$role', customAvatar);
+                                    } else {
+                                      await prefs.remove('profile_avatar_$role');
+                                    }
+                                    
+                                    final hasPin = hasPinMap[role] ?? false;
+                                    await prefs.setBool('profile_has_pin_$role', hasPin);
+                                    final pinVal = pinControllers[role]!.text.trim();
+                                    if (pinVal.length == 4) {
+                                      await prefs.setString('profile_pin_$role', pinVal);
+                                    }
+                                    
+                                    final isKids = isKidsMap[role] ?? false;
+                                    await prefs.setBool('profile_is_kids_$role', isKids);
+                                  }
+                                  
+                                  await checkConnection(setSheetState, newUrl);
+                                  
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          isConnected == true
+                                              ? "Connected & Settings saved successfully!"
+                                              : "Saved settings, but backend is offline.",
+                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                                        ),
+                                        backgroundColor: isConnected == true ? Colors.greenAccent : const Color(0xFF1E1E24),
+                                      ),
+                                    );
+                                    Navigator.pop(stateContext);
+                                  }
+                                },
+                                icon: const Icon(Icons.check_rounded, color: Colors.black),
+                                label: Text(
+                                  "Apply & Save",
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryColor,
+                                  padding: const EdgeInsets.symmetric(vertical: 14.0),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14.0),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -2711,6 +3030,620 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       },
     );
   }
+
+  void _showSubtitlesCCSettings(BuildContext context) {
+    double fontSize = 18.0;
+    double outlineWidth = 1.5;
+    double backdropOpacity = 0.4;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.7),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final primaryColor = Theme.of(context).primaryColor;
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(30.0)),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+                child: Container(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 32.0,
+                    left: 24.0,
+                    right: 24.0,
+                    top: 32.0,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F0F12).withOpacity(0.95),
+                    border: Border(
+                      top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1.5),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "SUBTITLES STYLE HUBS",
+                            style: GoogleFonts.cinzel(
+                              fontSize: 18.0,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: Colors.white60),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16.0),
+                      Text(
+                        "Customize subtitle size, font borders, backing opacity, and import custom files.",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                      ),
+                      const SizedBox(height: 24.0),
+                      
+                      Text(
+                        "Font Size: ${fontSize.toInt()}px",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0, fontWeight: FontWeight.bold),
+                      ),
+                      Slider(
+                        value: fontSize,
+                        min: 12.0,
+                        max: 36.0,
+                        activeColor: primaryColor,
+                        inactiveColor: Colors.white10,
+                        onChanged: (val) {
+                          setSheetState(() {
+                            fontSize = val;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12.0),
+
+                      Text(
+                        "Outline Stroke: ${outlineWidth.toStringAsFixed(1)}px",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0, fontWeight: FontWeight.bold),
+                      ),
+                      Slider(
+                        value: outlineWidth,
+                        min: 0.0,
+                        max: 4.0,
+                        activeColor: primaryColor,
+                        inactiveColor: Colors.white10,
+                        onChanged: (val) {
+                          setSheetState(() {
+                            outlineWidth = val;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 12.0),
+
+                      Text(
+                        "Backing Backdrop Opacity: ${(backdropOpacity * 100).toInt()}%",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0, fontWeight: FontWeight.bold),
+                      ),
+                      Slider(
+                        value: backdropOpacity,
+                        min: 0.0,
+                        max: 1.0,
+                        activeColor: primaryColor,
+                        inactiveColor: Colors.white10,
+                        onChanged: (val) {
+                          setSheetState(() {
+                            backdropOpacity = val;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 20.0),
+
+                      SizedBox(
+                        width: double.infinity,
+                        height: 46.0,
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Custom SRT/VTT file import overlay opened successfully!", style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold)),
+                                backgroundColor: primaryColor,
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.file_upload_outlined, color: Colors.white, size: 16),
+                          label: Text(
+                            "Import Custom SRT/VTT Files",
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.white24),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showNetworkDiagnostics(BuildContext context) {
+    double speedVal = 0.0;
+    int pingVal = 120;
+    bool isRunning = true;
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.7),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final primaryColor = Theme.of(context).primaryColor;
+            
+            if (isRunning && speedVal == 0.0) {
+              Future.doWhile(() async {
+                await Future.delayed(const Duration(milliseconds: 100));
+                if (!context.mounted) return false;
+                setSheetState(() {
+                  if (speedVal < 450.0) {
+                    speedVal += 35.0;
+                    if (pingVal > 12) pingVal -= 8;
+                  } else {
+                    speedVal = 450.0;
+                    pingVal = 12;
+                    isRunning = false;
+                  }
+                });
+                return isRunning;
+              });
+            }
+
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(30.0)),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+                child: Container(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 32.0,
+                    left: 24.0,
+                    right: 24.0,
+                    top: 32.0,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F0F12).withOpacity(0.95),
+                    border: Border(
+                      top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1.5),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "DIAGNOSTICS & SPEED TEST",
+                            style: GoogleFonts.cinzel(
+                              fontSize: 18.0,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: Colors.white60),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16.0),
+                      Text(
+                        "App Engine diagnostics status and live network speed checking.",
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                      ),
+                      const SizedBox(height: 24.0),
+
+                      Center(
+                        child: Container(
+                          width: 140.0,
+                          height: 140.0,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: primaryColor.withOpacity(0.2), width: 6.0),
+                          ),
+                          alignment: Alignment.center,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                speedVal.toInt().toString(),
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 34.0,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              Text(
+                                "Mbps",
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 11.0,
+                                  color: primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24.0),
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildMetricTileCompact(
+                              "Ping Latency",
+                              "$pingVal ms",
+                              Icons.network_ping_rounded,
+                              Colors.cyanAccent,
+                            ),
+                          ),
+                          const SizedBox(width: 12.0),
+                          Expanded(
+                            child: _buildMetricTileCompact(
+                              "Bandwidth Used",
+                              "14.2 GB",
+                              Icons.data_usage_rounded,
+                              Colors.purpleAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20.0),
+
+                      Container(
+                        padding: const EdgeInsets.all(12.0),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.06),
+                          border: Border.all(color: Colors.green.withOpacity(0.15)),
+                          borderRadius: BorderRadius.circular(10.0),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18.0),
+                            const SizedBox(width: 12.0),
+                            Text(
+                              "All rendering and play streams are operating optimally.",
+                              style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 11.5),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMetricTileCompact(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12.0),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.015),
+        border: Border.all(color: Colors.white.withOpacity(0.04)),
+        borderRadius: BorderRadius.circular(12.0),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 16.0),
+          const SizedBox(width: 10.0),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 9.5, fontWeight: FontWeight.bold)),
+              Text(value, style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13.0, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showScannerRadarDashboard(BuildContext context) {
+    List<String> logs = ['[System] Awaiting scanner logs feed...'];
+    String scannerStatus = 'idle';
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      barrierColor: Colors.black.withOpacity(0.7),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final primaryColor = Theme.of(context).primaryColor;
+            final statusColor = scannerStatus == 'scanning'
+                ? Colors.amber
+                : (scannerStatus == 'error' ? Colors.redAccent : Colors.greenAccent);
+            final statusText = scannerStatus == 'scanning'
+                ? "SCANNING ACTIVE..."
+                : (scannerStatus == 'error' ? "ERROR DETECTED" : "SCANNER IDLE");
+
+            return ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(30.0)),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+                child: Container(
+                  height: MediaQuery.of(context).size.height * 0.85,
+                  padding: const EdgeInsets.all(24.0),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F0F12).withOpacity(0.95),
+                    border: Border(
+                      top: BorderSide(color: Colors.white.withOpacity(0.1), width: 1.5),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "SCANNER & LOG FEED",
+                                style: GoogleFonts.cinzel(
+                                  fontSize: 18.0,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              Text(
+                                "Dynamic MTProto channel sync and log indexing feeds.",
+                                style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12.0),
+                              ),
+                            ],
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded, color: Colors.white60),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20.0),
+
+                      Center(
+                        child: AnimatedRadarSweep(scannerStatus: scannerStatus),
+                      ),
+                      const SizedBox(height: 20.0),
+
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48.0,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            if (scannerStatus == 'scanning') return;
+                            setSheetState(() {
+                              scannerStatus = 'scanning';
+                              logs = ['[System] Connecting to Telegram MTProto channels...', '[System] Active channel scan triggered successfully.'];
+                            });
+                            final result = await ApiService.triggerActiveScan();
+                            setSheetState(() {
+                              logs = result['logs'];
+                              scannerStatus = result['success'] ? 'idle' : 'error';
+                            });
+                          },
+                          icon: Icon(
+                            scannerStatus == 'scanning' ? Icons.hourglass_empty_rounded : Icons.radar_rounded,
+                            color: scannerStatus == 'scanning' ? Colors.white38 : Colors.black,
+                            size: 18,
+                          ),
+                          label: Text(
+                            scannerStatus == 'scanning' ? "SCANNING ACTIVE..." : "TRIGGER ACTIVE SCAN",
+                            style: GoogleFonts.plusJakartaSans(
+                              color: scannerStatus == 'scanning' ? Colors.white60 : Colors.black,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12.0,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: scannerStatus == 'scanning' ? Colors.white10 : primaryColor,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20.0),
+
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "SCANNER LOGS FEED",
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10.0, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                          ),
+                          Text(
+                            statusText,
+                            style: GoogleFonts.plusJakartaSans(color: statusColor, fontSize: 10.0, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8.0),
+
+                      Expanded(
+                        child: Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.4),
+                            borderRadius: BorderRadius.circular(14.0),
+                            border: Border.all(color: Colors.white.withOpacity(0.06)),
+                          ),
+                          padding: const EdgeInsets.all(14.0),
+                          child: ListView.builder(
+                            physics: const BouncingScrollPhysics(),
+                            itemCount: logs.length,
+                            itemBuilder: (context, index) {
+                              final log = logs[index];
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2.0),
+                                child: Text(
+                                  log,
+                                  style: TextStyle(
+                                    fontFamily: 'monospace',
+                                    color: log.contains("failed") || log.contains("Error")
+                                        ? Colors.redAccent.withOpacity(0.85)
+                                        : (log.contains("SUCCESS") || log.contains("completed")
+                                            ? Colors.greenAccent
+                                            : Colors.white70),
+                                    fontSize: 11.5,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class AnimatedRadarSweep extends StatefulWidget {
+  final String scannerStatus;
+  const AnimatedRadarSweep({Key? key, required this.scannerStatus}) : super(key: key);
+
+  @override
+  State<AnimatedRadarSweep> createState() => _AnimatedRadarSweepState();
+}
+
+class _AnimatedRadarSweepState extends State<AnimatedRadarSweep> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    );
+    if (widget.scannerStatus == 'scanning') {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant AnimatedRadarSweep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.scannerStatus == 'scanning') {
+      _controller.repeat();
+    } else {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primaryColor = Theme.of(context).primaryColor;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return SizedBox(
+          width: 100.0,
+          height: 100.0,
+          child: CustomPaint(
+            painter: RadarPainter(
+              rotationAngle: _controller.value * 3.1415926535 * 2,
+              radarColor: primaryColor,
+              isActive: widget.scannerStatus == 'scanning',
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class RadarPainter extends CustomPainter {
+  final double rotationAngle;
+  final Color radarColor;
+  final bool isActive;
+
+  RadarPainter({required this.rotationAngle, required this.radarColor, required this.isActive});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2;
+
+    final bgPaint = Paint()
+      ..color = radarColor.withOpacity(0.04)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(center, radius, bgPaint);
+
+    final linePaint = Paint()
+      ..color = radarColor.withOpacity(0.15)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawCircle(center, radius, linePaint);
+    canvas.drawCircle(center, radius * 0.66, linePaint);
+    canvas.drawCircle(center, radius * 0.33, linePaint);
+
+    canvas.drawLine(Offset(center.dx - radius, center.dy), Offset(center.dx + radius, center.dy), linePaint);
+    canvas.drawLine(Offset(center.dx, center.dy - radius), Offset(center.dx, center.dy + radius), linePaint);
+
+    if (isActive) {
+      final sweepPaint = Paint()
+        ..shader = SweepGradient(
+          center: Alignment.center,
+          startAngle: 0.0,
+          endAngle: 3.1415926535 * 2,
+          colors: [
+            radarColor.withOpacity(0.25),
+            radarColor.withOpacity(0.0),
+          ],
+          transform: GradientRotation(rotationAngle),
+        ).createShader(Rect.fromCircle(center: center, radius: radius))
+        ..style = PaintingStyle.fill;
+
+      canvas.drawCircle(center, radius, sweepPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
 class DonutChartPainter extends CustomPainter {

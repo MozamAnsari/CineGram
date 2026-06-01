@@ -373,7 +373,7 @@ class ApiService {
     return MediaItem(
       id: item['id']?.toString() ?? tmdbId,
       title: title,
-      type: type == 'tv' ? 'TV Show' : 'Movie',
+      type: type == 'tv' ? 'TV Show' : (type == 'anime' ? 'Anime' : 'Movie'),
       backdropUrl: backdropUrl,
       posterUrl: posterUrl,
       rating: rating,

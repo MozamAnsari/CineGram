@@ -9,34 +9,8 @@ const { StringSession } = require("telegram/sessions");
 const { createClient } = require("@supabase/supabase-js");
 const { handleStream } = require("./streamManager");
 const { scannerState, runScan, getDynamicChannels, setDynamicChannels } = require("./scannerService");
-const { parseM3U } = require("./m3uParser");
 const swaggerUi = require("swagger-ui-express");
 const swaggerJsdoc = require("swagger-jsdoc");
-
-// Pre-bundled free-to-air streams
-const DEFAULT_FREE_TO_AIR_STREAMS = [
-  {
-    name: "NASA HD TV",
-    logo: "https://upload.wikimedia.org/wikipedia/commons/e/e5/NASA_logo.svg",
-    url: "https://ntv1.nasatv.net/hls/ntv-hb.m3u8",
-    group: "Science"
-  },
-  {
-    name: "Bloomberg Live",
-    logo: "https://upload.wikimedia.org/wikipedia/commons/5/5e/Bloomberg_logo.svg",
-    url: "https://liveproduseast.global.ssl.fastly.net/ch/us/master.m3u8",
-    group: "News"
-  },
-  {
-    name: "DW English",
-    logo: "https://upload.wikimedia.org/wikipedia/commons/5/5a/Deutsche_Welle_logo.svg",
-    url: "https://dwstream72-lh.akamaihd.net/i/dwen_0@318797/master.m3u8",
-    group: "News"
-  }
-];
-
-// Local cache for IPTV streams (initialized with pre-bundled default streams)
-let iptvStreams = [...DEFAULT_FREE_TO_AIR_STREAMS];
 
 // Local cache for collaborative playlists & highlights
 let playlists = [];
@@ -1198,70 +1172,7 @@ app.post("/scanner/channels", (req, res) => {
   res.json({ message: "Dynamic channels updated successfully", channels: getDynamicChannels() });
 });
 
-// ----------------------------------------------------
-// IPTV ENDPOINTS
-// ----------------------------------------------------
-
-// Import M3U playlist text or URL pings and stores streams
-app.post("/iptv/import", async (req, res) => {
-  const { m3uText, url } = req.body;
-
-  if (!m3uText && !url) {
-    return res.status(400).json({ error: "Either 'm3uText' or 'url' is required." });
-  }
-
-  let textToParse = m3uText;
-
-  if (url) {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        return res.status(400).json({ error: `Failed to fetch M3U playlist from URL (HTTP ${response.status})` });
-      }
-      textToParse = await response.text();
-    } catch (err) {
-      console.error("[IPTV Import] Fetch error:", err);
-      return res.status(500).json({ error: "Failed to fetch M3U playlist from URL." });
-    }
-  }
-
-  try {
-    const parsedChannels = parseM3U(textToParse);
-    if (parsedChannels.length === 0) {
-      return res.status(400).json({ error: "No channels found or failed to parse M3U content." });
-    }
-
-    const existingUrls = new Set(iptvStreams.map(c => c.url));
-    const newChannels = parsedChannels.filter(c => !existingUrls.has(c.url));
-    iptvStreams = [...iptvStreams, ...newChannels];
-
-    res.status(200).json({
-      message: `Successfully imported ${parsedChannels.length} channel(s). Total cached channels: ${iptvStreams.length}`,
-      importedCount: parsedChannels.length,
-      totalCount: iptvStreams.length
-    });
-  } catch (err) {
-    console.error("[IPTV Import] Parser error:", err);
-    res.status(500).json({ error: "Error parsing M3U playlist content." });
-  }
-});
-
-// Retrieves imported IPTV streams segmented by category groups
-app.get("/iptv/channels", (req, res) => {
-  const grouped = {};
-  for (const channel of iptvStreams) {
-    const groupName = channel.group || "Uncategorized";
-    if (!grouped[groupName]) {
-      grouped[groupName] = [];
-    }
-    grouped[groupName].push({
-      name: channel.name,
-      logo: channel.logo,
-      url: channel.url
-    });
-  }
-  res.json({ groups: grouped });
-});
+// ---------------------------------------------------
 
 // 2. Retrieve scanner status and unresolved lists
 app.get("/scanner/status", async (req, res) => {
@@ -1280,6 +1191,7 @@ app.get("/scanner/status", async (req, res) => {
     res.json({
       active: scannerState.active,
       lastRun: scannerState.lastRun,
+      progress: scannerState.progress,
       unresolved: unresolved || [],
     });
   } catch (err) {
@@ -1595,39 +1507,11 @@ app.post("/telegram/channels", async (req, res) => {
     const scannerService = require("./scannerService");
     scannerService.setDynamicChannels(channels);
 
-    // Save channels to env file for persistent backend restarts
+    // Save channels to channels.json for persistent backend restarts
     const fs = require("fs");
     const path = require("path");
-    const envPath = path.join(__dirname, "../.env");
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, "utf8");
-      const moviesChan = channels.find(c => c.type === "movie");
-      const tvChan = channels.find(c => c.type === "tv");
-      const animeChan = channels.find(c => c.type === "anime");
-      
-      if (moviesChan) {
-        if (envContent.includes("TELEGRAM_CHANNEL_MOVIES=")) {
-          envContent = envContent.replace(/TELEGRAM_CHANNEL_MOVIES=.*/, `TELEGRAM_CHANNEL_MOVIES="${moviesChan.id}"`);
-        } else {
-          envContent += `\nTELEGRAM_CHANNEL_MOVIES="${moviesChan.id}"`;
-        }
-      }
-      if (tvChan) {
-        if (envContent.includes("TELEGRAM_CHANNEL_TV=")) {
-          envContent = envContent.replace(/TELEGRAM_CHANNEL_TV=.*/, `TELEGRAM_CHANNEL_TV="${tvChan.id}"`);
-        } else {
-          envContent += `\nTELEGRAM_CHANNEL_TV="${tvChan.id}"`;
-        }
-      }
-      if (animeChan) {
-        if (envContent.includes("TELEGRAM_CHANNEL_ANIME=")) {
-          envContent = envContent.replace(/TELEGRAM_CHANNEL_ANIME=.*/, `TELEGRAM_CHANNEL_ANIME="${animeChan.id}"`);
-        } else {
-          envContent += `\nTELEGRAM_CHANNEL_ANIME="${animeChan.id}"`;
-        }
-      }
-      fs.writeFileSync(envPath, envContent, "utf8");
-    }
+    const channelsJsonPath = path.join(__dirname, "./channels.json");
+    fs.writeFileSync(channelsJsonPath, JSON.stringify(channels, null, 2), "utf8");
 
     // Automatically trigger immediate background library scanning on channels update!
     runScan(tgClient, supabase).catch(err => {
@@ -1638,6 +1522,101 @@ app.post("/telegram/channels", async (req, res) => {
   } catch (err) {
     console.error("Save channel configurations error:", err);
     res.status(500).json({ success: false, error: err.toString() });
+  }
+});
+
+// 2b. Resolve custom private/public Telegram channel by username, invite link, or ID
+app.post("/telegram/resolve-channel", async (req, res) => {
+  if (!tgClient) {
+    return res.status(400).json({ success: false, error: "Telegram Gateway offline. Connect account first." });
+  }
+
+  const { username } = req.body;
+  if (!username) {
+    return res.status(400).json({ success: false, error: "Username or invite link is required." });
+  }
+
+  try {
+    let query = username.trim();
+
+    // Check if query is a channel ID directly
+    if (query.match(/^-?\d+$/)) {
+      let peerId;
+      if (query.startsWith("-100")) {
+        peerId = BigInt(query);
+      } else {
+        peerId = BigInt("-100" + query);
+      }
+      const entity = await tgClient.getEntity(peerId);
+      if (entity) {
+        return res.json({
+          success: true,
+          channel: {
+            id: entity.id.toString(),
+            title: entity.title || entity.username || "Resolved Channel",
+            username: entity.username || ""
+          }
+        });
+      }
+    }
+
+    // Parse invite link or standard link if present
+    if (query.includes("t.me/")) {
+      const parts = query.split("t.me/");
+      let endPart = parts[parts.length - 1];
+      if (endPart.startsWith("+")) {
+        // Invite link join hash!
+        try {
+          const hash = endPart.substring(1);
+          const result = await tgClient.invoke(
+            new Api.messages.ImportChatInvite({ hash })
+          );
+          if (result && result.chats && result.chats.length > 0) {
+            const chat = result.chats[0];
+            return res.json({
+              success: true,
+              channel: {
+                id: chat.id.toString(),
+                title: chat.title,
+                username: chat.username || ""
+              }
+            });
+          }
+        } catch (inviteErr) {
+          console.error("Invite link import error:", inviteErr);
+        }
+      } else {
+        query = endPart;
+      }
+    }
+
+    if (query.startsWith("@")) {
+      query = query.substring(1);
+    }
+
+    // Try to get entity by username/slug
+    const entity = await tgClient.getEntity(query);
+
+    if (entity) {
+      const isChannel = entity.className === "Channel" || entity.className === "Chat" || entity.broadcast || entity.megagroup;
+      if (!isChannel) {
+        return res.status(400).json({ success: false, error: "The resolved entity is not a channel or group." });
+      }
+
+      res.json({
+        success: true,
+        channel: {
+          id: entity.id.toString(),
+          title: entity.title || entity.username || "Resolved Channel",
+          username: entity.username || ""
+        }
+      });
+    } else {
+      res.status(404).json({ success: false, error: "Could not find channel with that username/link." });
+    }
+  } catch (err) {
+    console.error("Resolve channel error:", err);
+    res.status(400).json({ success: false, error: err.message || err.toString() });
   }
 });
 

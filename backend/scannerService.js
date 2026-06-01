@@ -1,18 +1,40 @@
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
-// Scanner status state in memory
+// Scanner status state in memory with real-time progress details
 let scannerState = {
   active: false,
   lastRun: null,
+  progress: {
+    totalChannels: 0,
+    currentChannel: 0,
+    currentChannelName: "",
+    processedItems: 0,
+    resolvedItems: 0,
+    status: "idle", // "idle", "scanning", "completed", "error"
+    logs: []
+  }
 };
 
-// Dynamic channel configurations (Movies, TV Shows, Anime)
-let dynamicChannels = [
-  { id: process.env.TELEGRAM_CHANNEL_MOVIES || "-100223344", type: "movie", name: "Movies" },
-  { id: process.env.TELEGRAM_CHANNEL_TV || "-100223345", type: "tv", name: "TV Shows" },
-  { id: process.env.TELEGRAM_CHANNEL_ANIME || "-100223346", type: "anime", name: "Anime" }
-];
+// Dynamic channel configurations (Movies, TV Shows, Anime) persistently loaded
+const fs = require("fs");
+const channelsJsonPath = path.resolve(__dirname, "./channels.json");
+
+let dynamicChannels = [];
+if (fs.existsSync(channelsJsonPath)) {
+  try {
+    dynamicChannels = JSON.parse(fs.readFileSync(channelsJsonPath, "utf8"));
+    console.log(`[Scanner] Loaded ${dynamicChannels.length} persistent channels from channels.json`);
+  } catch (err) {
+    console.error("[Scanner] Error loading channels.json:", err);
+  }
+} else {
+  dynamicChannels = [
+    { id: process.env.TELEGRAM_CHANNEL_MOVIES || "-100223344", type: "movie", name: "Movies" },
+    { id: process.env.TELEGRAM_CHANNEL_TV || "-100223345", type: "tv", name: "TV Shows" },
+    { id: process.env.TELEGRAM_CHANNEL_ANIME || "-100223346", type: "anime", name: "Anime" }
+  ];
+}
 
 function getDynamicChannels() {
   return dynamicChannels;
@@ -153,25 +175,37 @@ async function runScan(tgClient, supabase, targetChannelId) {
   scannerState.active = true;
   scannerState.lastRun = new Date().toISOString();
 
+  let channelsToScan = [];
+  if (targetChannelId) {
+    const matched = dynamicChannels.find(c => c.id.toString() === targetChannelId.toString());
+    channelsToScan.push({
+      id: targetChannelId,
+      type: matched ? matched.type : null,
+      name: matched ? matched.name : "Target Channel"
+    });
+  } else {
+    channelsToScan = [...dynamicChannels];
+  }
+
+  scannerState.progress = {
+    totalChannels: channelsToScan.length,
+    currentChannel: 0,
+    currentChannelName: "",
+    processedItems: 0,
+    resolvedItems: 0,
+    status: "scanning",
+    logs: [`[${new Date().toLocaleTimeString()}] Started scanning ${channelsToScan.length} channel(s)...`]
+  };
+
   try {
-    let channelsToScan = [];
-    if (targetChannelId) {
-      const matched = dynamicChannels.find(c => c.id.toString() === targetChannelId.toString());
-      channelsToScan.push({
-        id: targetChannelId,
-        type: matched ? matched.type : null,
-        name: matched ? matched.name : "Target Channel"
-      });
-    } else {
-      channelsToScan = [...dynamicChannels];
-    }
-
-    console.log(`[Scanner] Started scanning ${channelsToScan.length} Telegram channel source(s).`);
-
     const tmdbApiKey = process.env.TMDB_API_KEY;
 
     for (const chan of channelsToScan) {
+      scannerState.progress.currentChannel++;
+      scannerState.progress.currentChannelName = chan.name || chan.id.toString();
+      scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Accessing Telegram Channel: "${scannerState.progress.currentChannelName}"`);
       console.log(`[Scanner] Scanning Telegram channel: ${chan.id} (${chan.type || "unknown type"})`);
+      
       let peer;
       if (typeof chan.id === "string" && chan.id.startsWith("-100")) {
         peer = BigInt(chan.id);
@@ -181,9 +215,25 @@ async function runScan(tgClient, supabase, targetChannelId) {
         peer = chan.id;
       }
 
-      // Fetch the 50 most recent messages from the channel
-      const messages = await tgClient.getMessages(peer, { limit: 50 });
+      // Fetch the 50 most recent messages from the channel (resolving input entity first for Telethon/GramJS stability)
+      let messages = [];
+      try {
+        const entity = await tgClient.getEntity(peer);
+        messages = await tgClient.getMessages(entity, { limit: 50 });
+      } catch (entityErr) {
+        console.error(`[Scanner] Peer resolution error for channel ID ${chan.id}:`, entityErr.message || entityErr.toString());
+        scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Peer resolution error for channel: ${chan.id}. Resolving via peer cache fallback...`);
+        // Fallback to direct getMessages if getEntity fails
+        try {
+          messages = await tgClient.getMessages(peer, { limit: 50 });
+        } catch (fbErr) {
+          console.error(`[Scanner] Fallback getMessages failed for channel ID ${chan.id}:`, fbErr.message || fbErr.toString());
+          scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Failed to scan channel ${chan.id}: ${fbErr.message}`);
+          continue;
+        }
+      }
       console.log(`[Scanner] Fetched ${messages.length} messages from Telegram channel ${chan.id}`);
+      scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Fetched ${messages.length} messages. Filtering video content...`);
 
       for (const msg of messages) {
         const filename = getFilenameFromMessage(msg);
@@ -191,6 +241,8 @@ async function runScan(tgClient, supabase, targetChannelId) {
 
         const messageId = msg.id.toString();
         console.log(`[Scanner] Processing video message ID ${messageId}: "${filename}"`);
+        scannerState.progress.processedItems++;
+        scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Found video file: "${filename}"`);
 
         // Check if already indexed in database (with valid tmdb_id !== '0')
         const { data: existing } = await supabase
@@ -202,6 +254,8 @@ async function runScan(tgClient, supabase, targetChannelId) {
 
         if (existing && existing.tmdb_id !== "0") {
           console.log(`[Scanner] Message ID ${messageId} is already resolved. Skipping.`);
+          scannerState.progress.resolvedItems++;
+          scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] File "${filename}" already indexed. Skipped.`);
           continue;
         }
 
@@ -247,8 +301,10 @@ async function runScan(tgClient, supabase, targetChannelId) {
                 tmdbId = bestMatch.id.toString();
                 resolvedTitle = bestMatch.title || bestMatch.name;
                 console.log(`[Scanner] Successfully resolved "${filename}" to TMDB: "${resolvedTitle}" (ID: ${tmdbId})`);
+                scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Resolved: "${resolvedTitle}" (TMDB: ${tmdbId})`);
               } else {
                 console.log(`[Scanner] No TMDB results for: "${parsed.title}". Saving as unresolved.`);
+                scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] No TMDB match found for: "${parsed.title}". Indexing as unresolved...`);
               }
             } else {
               console.error(`[Scanner] TMDB Search API returned HTTP ${response.status}`);
@@ -258,6 +314,7 @@ async function runScan(tgClient, supabase, targetChannelId) {
           }
         } else {
           console.warn("[Scanner] TMDB_API_KEY is not defined. Indexing as unresolved.");
+          scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] TMDB Key missing. Saved as unresolved.`);
         }
 
         // Upsert listing record
@@ -277,11 +334,26 @@ async function runScan(tgClient, supabase, targetChannelId) {
 
         if (dbErr) {
           console.error(`[Scanner] Database upsert error for message ID ${messageId}:`, dbErr.message);
+          scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Supabase DB Error: ${dbErr.message}`);
+          if (dbErr.message.toLowerCase().includes("row-level security") || dbErr.message.toLowerCase().includes("policy")) {
+            console.warn("==================================================");
+            console.warn("SUPABASE RLS WARNING: Anonymous write blocked!");
+            console.warn("Please run this command in your Supabase SQL Editor:");
+            console.warn("ALTER TABLE public.media_listings DISABLE ROW LEVEL SECURITY;");
+            console.warn("==================================================");
+            scannerState.progress.logs.push(`[RLS ALERT] Run 'ALTER TABLE public.media_listings DISABLE ROW LEVEL SECURITY;' in your Supabase SQL editor to allow writes.`);
+          }
+        } else {
+          scannerState.progress.resolvedItems++;
         }
       }
     }
+    scannerState.progress.status = "completed";
+    scannerState.progress.logs.push(`[${new Date().toLocaleTimeString()}] Index sync complete! Processed: ${scannerState.progress.processedItems}, Success: ${scannerState.progress.resolvedItems}`);
   } catch (err) {
     console.error("[Scanner] Error during background channel scan:", err);
+    scannerState.progress.status = "error";
+    scannerState.progress.logs.push(`[ERROR] Background channel scan failed: ${err.message || err.toString()}`);
   } finally {
     scannerState.active = false;
     console.log("[Scanner] Background channel scan completed.");

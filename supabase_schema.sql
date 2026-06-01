@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS public.bookmarks (
 
 -- Enable Row Level Security (RLS) on all tables for security
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.media_listings ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE public.media_listings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.media_listings DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.watch_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
 
