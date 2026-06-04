@@ -1,116 +1,105 @@
-# 🚀 Cinegram - Render 1-Click Deployment Guide
+# 🚀 Cinegram - Multi-Platform 1-Click Deployment Guide
 
-This manual walks you through hosting your **Cinegram Express.js Backend Gateway** on [Render](https://render.com/) (Free or Starter tier) with **1-click automation** using Render Blueprints. 
-
-The backend has been pre-configured with a production-ready, lightweight Docker container and is highly optimized to run smoothly within a **512MB RAM** low-memory environment without getting killed by the Out-Of-Memory (OOM) killer.
+This guide walks you through hosting your **Cinegram Express.js Backend Gateway** on various cloud hosting providers and VPS instances. The backend is pre-configured to run efficiently in low-memory environments (like 512MB RAM free tiers) and uses Supabase for database session persistence.
 
 ---
 
-## 📋 Prerequisites & Accounts
-Before you deploy, make sure you have accounts and credentials ready for:
-1. **GitHub** (To host your code repository)
-2. **Render** (To deploy the server)
-3. **Telegram API Developer Credentials** ([my.telegram.org](https://my.telegram.org))
-4. **TMDB API Key** ([themoviedb.org](https://www.themoviedb.org/))
-5. **Supabase Project** ([supabase.com](https://supabase.com))
+## 📋 Prerequisites & Credentials
+Before deploying, make sure you have:
+1. **GitHub Repository** containing this project.
+2. **Telegram API Developer Credentials** ([my.telegram.org](https://my.telegram.org)).
+3. **TMDB API Key** ([themoviedb.org](https://www.themoviedb.org/)).
+4. **Supabase Project** ([supabase.com](https://supabase.com)) with the [`supabase_schema.sql`](file:///f:/Games/Project%20Don't%20Delete%20This%20Folder/supabase_schema.sql) applied in the SQL Editor.
+5. **Telegram Session String**: Run `node login.js` locally inside the `backend/` directory to generate your persistent session string (`TELEGRAM_SESSION_STRING`).
 
 ---
 
-## 🛠️ Step 1: Prepare Your Services
+## ⚡ 1-Click Cloud Deployment Options
 
-### A. Set Up the Supabase Database
-1. Log in to [Supabase](https://supabase.com) and create a **New Project**.
-2. Navigate to the **SQL Editor** in the left sidebar.
-3. Click **New Query**, then open and copy the entire contents of the [`supabase_schema.sql`](file:///f:/Games/Project%20Don't%20Delete%20This%20Folder/supabase_schema.sql) file located in the root of your project.
-4. Paste the SQL code into the editor and click **Run**.
-5. Go to **Project Settings > API** and copy:
-   - **Project URL** (This is your `SUPABASE_URL`)
-   - **API Key** (Use the `anon public` key or `service_role` secret key as your `SUPABASE_KEY`)
+### 1. Railway (Recommended)
+Railway is stateless-safe, supports github-triggered deploys, and has a native variables panel.
+1. Log in to [Railway.app](https://railway.app).
+2. Click **New Project > Deploy from GitHub** and connect your repo.
+3. Railway will automatically detect the configuration from [`railway.json`](file:///f:/Games/Project%20Don%27t%20Delete%20This%20Folder/railway.json) at the root.
+4. Fill in the environment variables:
+   - `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION_STRING`
+   - `TMDB_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`
+5. Click **Deploy**.
 
-### B. Generate Your Telegram Session String
-Because Render environments are stateless and restarts happen frequently, you must generate a persistent **Telegram Session String** locally. This allows the server to authenticate securely on boot without interactive login prompts.
+---
 
-1. Create a `.env` file at the root of your project and add your Telegram API credentials:
+### 2. Koyeb (Free Nano Instance)
+Koyeb Nano instance has no sleep timers on inactivity, making it perfect for always-on streaming.
+1. Log in to [Koyeb.com](https://www.koyeb.com).
+2. Click **Create Service > GitHub** and select your repository.
+3. Koyeb will configure the service using the [`koyeb.yaml`](file:///f:/Games/Project%20Don%27t%20Delete%20This%20Folder/koyeb.yaml) file at the root.
+4. Set up the environment variables under **App Settings**.
+5. Click **Deploy**.
+
+---
+
+### 3. Hugging Face Spaces (Docker Space)
+Hugging Face Spaces provides free hosting with no cold-starts, building directly from your Docker configuration.
+1. Log in to [Hugging Face](https://huggingface.co) and create a **New Space**.
+2. Select **Docker** as the SDK, and select **Blank** template.
+3. Copy your project files to the Space repository.
+4. Add the following YAML metadata block at the top of your Hugging Face Space `README.md` to configure the build:
+   ```yaml
+   ---
+   title: Cinegram Gateway
+   emoji: 🎥
+   colorFrom: purple
+   colorTo: indigo
+   sdk: docker
+   app_port: 3000
+   ---
+   ```
+5. Add your secure variables in **Space Settings > Variables and secrets** as Space Secrets.
+
+---
+
+### 4. Render (Blueprint YAML)
+Render deploys using Render Blueprints using the [`render.yaml`](file:///f:/Games/Project%20Don%27t%20Delete%20This%20Folder/render.yaml) file.
+1. Go to your [Render Dashboard](https://dashboard.render.com).
+2. Click **New + > Blueprint**.
+3. Select your **Cinegram** repository, name the blueprint group, and enter the environment variables when prompted.
+4. Click **Apply**.
+
+---
+
+## 🏠 VPS Self-Host Deployment (Recommended for Production)
+For actual public streaming, deploying on a VPS (DigitalOcean, Linode, Contabo) is the most reliable option.
+
+### Setup Instructions
+1. Install Docker and Docker Compose on your VPS.
+2. Clone your Cinegram repository:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/CineGram.git && cd CineGram
+   ```
+3. Create a `.env` file in the root directory:
    ```env
    TELEGRAM_API_ID="your_telegram_api_id"
    TELEGRAM_API_HASH="your_telegram_api_hash"
+   TELEGRAM_SESSION_STRING="your_persistent_session_string"
+   TMDB_API_KEY="your_tmdb_api_key"
+   SUPABASE_URL="your_supabase_url"
+   SUPABASE_KEY="your_supabase_anon_or_service_role_key"
+   TELEGRAM_BOT_TOKEN="optional_bot_token"
    ```
-2. Open your terminal, navigate to the `backend/` directory, and run the login utility:
+4. Start the service with one command:
    ```bash
-   cd backend
-   npm install
-   node login.js
-   ```
-3. Enter your Telegram phone number (e.g., `+1234567890`), your 2FA password (if enabled), and the login code sent to your Telegram app.
-4. Upon successful authentication, a **long session string** will print in the console.
-5. **Copy and save this string securely!** This is your `TELEGRAM_SESSION_STRING`.
-
----
-
-## 📦 Step 2: Push Your Project to GitHub
-Render links directly to a Git repository to automate deployments.
-
-1. Initialize git and commit your files inside the root directory (`f:\Games\Project Don't Delete This Folder`):
-   ```bash
-   git init
-   git add .
-   git commit -m "feat: Add Render deployment configuration"
-   ```
-2. Create a **Private** repository on [GitHub](https://github.com/new).
-3. Link your local project to GitHub and push your main branch:
-   ```bash
-   git remote add origin https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME.git
-   git branch -M main
-   git push -u origin main
+   docker compose up -d --build
    ```
 
 ---
 
-## ⚡ Step 3: Deploy on Render using Blueprint
-
-Render will read the [`render.yaml`](file:///f:/Games/Project%20Don't%20Delete%20This%20Folder/render.yaml) file at the root of your repository to automatically configure the service.
-
-1. Go to your [Render Dashboard](https://dashboard.render.com).
-2. Click **New +** in the top right corner and select **Blueprint**.
-3. Connect your GitHub account (if you haven't already) and select your **Cinegram** repository.
-4. Give your blueprint group a name (e.g. `cinegram-production`).
-5. Render will automatically parse the `render.yaml` and ask you for the following environment variables:
-
-| Environment Variable | Description | Source |
-| :--- | :--- | :--- |
-| `TELEGRAM_API_ID` | Your Telegram API ID (integer) | [my.telegram.org](https://my.telegram.org) |
-| `TELEGRAM_API_HASH` | Your Telegram API Hash | [my.telegram.org](https://my.telegram.org) |
-| `TELEGRAM_SESSION_STRING` | The long session string generated locally | Result of `node login.js` |
-| `TMDB_API_KEY` | TMDB API Key for media metadata | [themoviedb.org](https://www.themoviedb.org/) |
-| `SUPABASE_URL` | Your Supabase Project URL | Supabase Dashboard > API |
-| `SUPABASE_KEY` | Your Supabase API Key | Supabase Dashboard > API |
-
-6. Click **Apply**.
-7. Render will now provision your Node.js container, build the optimized Docker image, and deploy your streaming gateway!
-
----
-
-## 🔍 Step 4: Verify Your Deployment
-Once the deployment status turns green (**Live**), verify that all services are correctly connected:
-
-1. Click on the public URL generated by Render (looks like `https://cinegram-backend.onrender.com`).
-2. Append `/health` to the URL in your web browser (e.g., `https://cinegram-backend.onrender.com/health`).
-3. You should see a successful JSON payload indicating healthy status:
-   ```json
-   {
-     "status": "healthy",
-     "telegram_connected": true,
-     "supabase_configured": true,
-     "tmdb_configured": true
-   }
-   ```
-
-🎉 **Congratulations! Your Cinegram server is fully operational and streaming live from Telegram directly to your database-backed frontend application!**
-
----
-
-## 💡 low-Memory & Free-Tier Optimization Details
-
-- **Garbage Collection Optimization**: The Dockerfile sets `NODE_OPTIONS="--max-old-space-size=400"`. This forces the Node.js V8 garbage collector to run aggressively when heap usage approaches 400MB, leaving 112MB of RAM free for networking sockets and system processes on Render's 512MB RAM environment.
-- **Zero Disk Dependency**: The streaming engine operates entirely in memory using standard node-stream buffers, avoiding Render ephemeral file-system write bottlenecks.
-- **Render Free Tier Spin-Down**: Note that on Render's **Free** tier, the web service will automatically spin down (sleep) after 15 minutes of inactivity. The next request will take ~50 seconds to boot up and connect to Telegram. To prevent this, you can upgrade the service to the **Starter** tier ($7/month) in the Render dashboard for 24/7 always-on uptime.
+## 🔍 Health Check Verification
+To verify your deployment is successful, check the `/health` endpoint on your deployed URL:
+```json
+{
+  "status": "healthy",
+  "telegram_connected": true,
+  "supabase_configured": true,
+  "tmdb_configured": true
+}
+```
