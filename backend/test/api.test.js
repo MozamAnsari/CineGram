@@ -28,6 +28,7 @@ jest.mock("telegram", () => {
       this.apiId = apiId;
       this.apiHash = apiHash;
       this.options = options;
+      this.connected = true;
     }
     async connect() {
       return true;

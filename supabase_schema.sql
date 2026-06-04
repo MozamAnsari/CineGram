@@ -49,12 +49,20 @@ CREATE TABLE IF NOT EXISTS public.bookmarks (
     UNIQUE(user_id, media_listing_id)
 );
 
+-- 5. TELEGRAM SESSIONS TABLE (Render session persistence)
+CREATE TABLE IF NOT EXISTS public.telegram_sessions (
+    id TEXT PRIMARY KEY,
+    session_string TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- Enable Row Level Security (RLS) on all tables for security
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE public.media_listings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.media_listings DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.watch_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.telegram_sessions DISABLE ROW LEVEL SECURITY;
 
 -- ----------------------------------------------------
 -- Row Level Security (RLS) Policies
@@ -69,6 +77,8 @@ CREATE POLICY "Allow users to insert own profile" ON public.profiles FOR INSERT 
 CREATE POLICY "Allow anyone to read media listings" ON public.media_listings FOR SELECT USING (true);
 CREATE POLICY "Allow authenticated users to insert listings" ON public.media_listings FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 CREATE POLICY "Allow authenticated users to update listings" ON public.media_listings FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Allow anyone to insert media listings" ON public.media_listings FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow anyone to update media listings" ON public.media_listings FOR UPDATE USING (true);
 
 -- Watch History Policies (Private read/write to owner)
 CREATE POLICY "Allow users to read own watch history" ON public.watch_history FOR SELECT USING (auth.uid() = user_id);
@@ -80,3 +90,10 @@ CREATE POLICY "Allow users to delete own watch history" ON public.watch_history 
 CREATE POLICY "Allow users to read own bookmarks" ON public.bookmarks FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Allow users to insert own bookmarks" ON public.bookmarks FOR INSERT WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Allow users to delete own bookmarks" ON public.bookmarks FOR DELETE USING (auth.uid() = user_id);
+
+-- Telegram Sessions Policies (Render/HuggingFace ephemeral storage persistence)
+CREATE POLICY "Allow anyone to read telegram sessions" ON public.telegram_sessions FOR SELECT USING (true);
+CREATE POLICY "Allow anyone to insert telegram sessions" ON public.telegram_sessions FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow anyone to update telegram sessions" ON public.telegram_sessions FOR UPDATE USING (true);
+CREATE POLICY "Allow anyone to delete telegram sessions" ON public.telegram_sessions FOR DELETE USING (true);
+

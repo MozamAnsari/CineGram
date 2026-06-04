@@ -21,7 +21,12 @@ const generateId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random()
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+  allowedHeaders: ["Content-Type", "Authorization", "x-cinegram-profile"]
+}));
+app.options("*", cors());
 app.use(express.json());
 app.use(helmet());
 
@@ -84,7 +89,7 @@ const tmdbApiKey = process.env.TMDB_API_KEY;
 
 // Supabase Credentials
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
 
 let tgClient = null;
 let supabase = null;
@@ -131,17 +136,41 @@ async function getUserId(req) {
 
 // Initialize Telegram Client
 async function initTelegram() {
-  if (!sessionString) {
+  let loadedSession = sessionString;
+  
+  if (supabase) {
+    try {
+      console.log("[Telegram Init] Querying telegram_sessions from Supabase database...");
+      const { data, error } = await supabase
+        .from("telegram_sessions")
+        .select("session_string")
+        .eq("id", "primary_session")
+        .maybeSingle();
+      
+      if (!error && data && data.session_string) {
+        loadedSession = data.session_string;
+        sessionString = loadedSession;
+        console.log("[Telegram Init] Successfully loaded Telegram session from Supabase!");
+      } else if (error) {
+        console.warn("[Telegram Init] Supabase error loading session:", error.message);
+      } else {
+        console.log("[Telegram Init] No Telegram session record found in database.");
+      }
+    } catch (dbErr) {
+      console.warn("[Telegram Init] Database query failed (table might not exist yet):", dbErr.message || dbErr.toString());
+    }
+  }
+
+  if (!loadedSession) {
     console.warn("==================================================");
-    console.warn("WARNING: TELEGRAM_SESSION_STRING is missing!");
-    console.warn("Please run 'node login.js' first to generate your");
-    console.warn("session string, and save it in your .env file.");
+    console.warn("WARNING: TELEGRAM_SESSION_STRING is missing in env and database!");
+    console.warn("Please run 'node login.js' first or log in via app.");
     console.warn("==================================================");
     return;
   }
 
   console.log("Connecting to Telegram via session string...");
-  const session = new StringSession(sessionString);
+  const session = new StringSession(loadedSession);
   tgClient = new TelegramClient(session, apiId, apiHash, {
     connectionRetries: 5,
   });
@@ -178,6 +207,15 @@ app.get("/stream", async (req, res) => {
 // 1. Get Telegram Connection and Login Status
 app.get("/telegram/status", async (req, res) => {
   try {
+    if (!tgClient || !tgClient.connected) {
+      console.log("[Status check] Telegram client offline. Attempting auto-connection...");
+      try {
+        await initTelegram();
+      } catch (err) {
+        console.error("[Status check] Auto-connect failed:", err);
+      }
+    }
+
     const isConnected = tgClient !== null && tgClient.connected;
     let me = null;
     if (isConnected) {
@@ -283,6 +321,26 @@ app.post("/telegram/login/verify", async (req, res) => {
     // Save to global variables in memory
     sessionString = newSessionString;
     tgClient = client;
+
+    // Persist session to Supabase database for Render ephemeral storage persistence
+    if (supabase) {
+      try {
+        const { error: dbErr } = await supabase
+          .from("telegram_sessions")
+          .upsert({
+            id: "primary_session",
+            session_string: newSessionString,
+            created_at: new Date().toISOString()
+          }, { onConflict: "id" });
+        if (dbErr) {
+          console.error("[Verify Login] Failed to save session to Supabase database:", dbErr.message);
+        } else {
+          console.log("[Verify Login] Successfully saved Telegram session string to Supabase database.");
+        }
+      } catch (dbErr) {
+        console.error("[Verify Login] Database error during session persistence:", dbErr.message || dbErr.toString());
+      }
+    }
     
     // Persist session to .env file automatically (only works in local dev environments)
     try {
@@ -330,6 +388,23 @@ app.post("/telegram/logout", async (req, res) => {
       tgClient = null;
     }
     sessionString = "";
+
+    // Remove session from Supabase database
+    if (supabase) {
+      try {
+        const { error: dbErr } = await supabase
+          .from("telegram_sessions")
+          .delete()
+          .eq("id", "primary_session");
+        if (dbErr) {
+          console.error("[Logout] Failed to delete session from Supabase database:", dbErr.message);
+        } else {
+          console.log("[Logout] Successfully deleted Telegram session string from Supabase database.");
+        }
+      } catch (dbErr) {
+        console.error("[Logout] Database error during session deletion:", dbErr.message || dbErr.toString());
+      }
+    }
 
     // Remove session from .env file
     const fs = require("fs");
@@ -1137,11 +1212,22 @@ app.get("/bookmarks", async (req, res) => {
 
 // 1. Trigger background scan
 app.post("/scanner/trigger", async (req, res) => {
-  if (!tgClient) {
-    return res.status(503).json({ error: "Telegram gateway is not connected. Generate TELEGRAM_SESSION_STRING first." });
-  }
   if (!supabase) {
     return res.status(501).json({ error: "Supabase integration not configured." });
+  }
+
+  // Auto-connect Telegram client if not currently connected
+  if (!tgClient || !tgClient.connected) {
+    console.log("[Scanner Trigger] Telegram client offline. Attempting to connect...");
+    try {
+      await initTelegram();
+    } catch (err) {
+      console.error("[Scanner Trigger] Auto-connect failed:", err);
+    }
+  }
+
+  if (!tgClient || !tgClient.connected) {
+    return res.status(503).json({ error: "Telegram gateway is not connected. Please log in first." });
   }
 
   const { channelId } = req.body;
@@ -1474,7 +1560,17 @@ app.get("/health", (req, res) => {
 
 // 1. Fetch user's channels/megagroups for indexing selector
 app.get("/telegram/chats", async (req, res) => {
-  if (!tgClient) {
+  // Auto-connect Telegram client if not currently connected
+  if (!tgClient || !tgClient.connected) {
+    console.log("[Chats Fetch] Telegram client offline. Attempting to connect...");
+    try {
+      await initTelegram();
+    } catch (err) {
+      console.error("[Chats Fetch] Auto-connect failed:", err);
+    }
+  }
+
+  if (!tgClient || !tgClient.connected) {
     return res.status(400).json({ success: false, error: "Telegram Gateway offline. Connect account first." });
   }
   try {
@@ -1521,8 +1617,19 @@ app.post("/telegram/channels", async (req, res) => {
 });
 
 // 2b. Resolve custom private/public Telegram channel by username, invite link, or ID
+// 2b. Resolve custom private/public Telegram channel by username, invite link, or ID
 app.post("/telegram/resolve-channel", async (req, res) => {
-  if (!tgClient) {
+  // Auto-connect Telegram client if not currently connected
+  if (!tgClient || !tgClient.connected) {
+    console.log("[Resolve Channel] Telegram client offline. Attempting to connect...");
+    try {
+      await initTelegram();
+    } catch (err) {
+      console.error("[Resolve Channel] Auto-connect failed:", err);
+    }
+  }
+
+  if (!tgClient || !tgClient.connected) {
     return res.status(400).json({ success: false, error: "Telegram Gateway offline. Connect account first." });
   }
 
@@ -1547,7 +1654,7 @@ app.post("/telegram/resolve-channel", async (req, res) => {
         return res.json({
           success: true,
           channel: {
-            id: entity.id.toString(),
+            id: entity.id.toString().startsWith("-100") ? entity.id.toString() : "-100" + entity.id.toString(),
             title: entity.title || entity.username || "Resolved Channel",
             username: entity.username || ""
           }
@@ -1563,22 +1670,44 @@ app.post("/telegram/resolve-channel", async (req, res) => {
         // Invite link join hash!
         try {
           const hash = endPart.substring(1);
-          const result = await tgClient.invoke(
-            new Api.messages.ImportChatInvite({ hash })
-          );
-          if (result && result.chats && result.chats.length > 0) {
-            const chat = result.chats[0];
+          let chat;
+          try {
+            const result = await tgClient.invoke(
+              new Api.messages.ImportChatInvite({ hash })
+            );
+            if (result && result.chats && result.chats.length > 0) {
+              chat = result.chats[0];
+            }
+          } catch (inviteErr) {
+            console.warn("Invite link import failed (checking fallback):", inviteErr.message || inviteErr.toString());
+            // If already a member, CheckChatInvite allows us to fetch chat details anyway
+            try {
+              const checkResult = await tgClient.invoke(
+                new Api.messages.CheckChatInvite({ hash })
+              );
+              if (checkResult && checkResult.chat) {
+                chat = checkResult.chat;
+              } else if (checkResult && checkResult.chats && checkResult.chats.length > 0) {
+                chat = checkResult.chats[0];
+              }
+            } catch (checkErr) {
+              console.error("CheckChatInvite check failed:", checkErr.message || checkErr.toString());
+            }
+          }
+
+          if (chat) {
+            const finalId = chat.id.toString().startsWith("-100") ? chat.id.toString() : "-100" + chat.id.toString();
             return res.json({
               success: true,
               channel: {
-                id: chat.id.toString(),
-                title: chat.title,
+                id: finalId,
+                title: chat.title || "Resolved Channel",
                 username: chat.username || ""
               }
             });
           }
         } catch (inviteErr) {
-          console.error("Invite link import error:", inviteErr);
+          console.error("Invite link processing error:", inviteErr);
         }
       } else {
         query = endPart;
@@ -1601,7 +1730,7 @@ app.post("/telegram/resolve-channel", async (req, res) => {
       res.json({
         success: true,
         channel: {
-          id: entity.id.toString(),
+          id: entity.id.toString().startsWith("-100") ? entity.id.toString() : "-100" + entity.id.toString(),
           title: entity.title || entity.username || "Resolved Channel",
           username: entity.username || ""
         }
