@@ -180,6 +180,15 @@ async function initTelegram() {
   try {
     await tgClient.connect();
     console.log("SUCCESSFULLY CONNECTED TO TELEGRAM MTPROTO API!");
+    
+    // Warm up the entity cache by fetching dialogs
+    console.log("[Telegram Init] Warming up GramJS entity cache via getDialogs...");
+    try {
+      await tgClient.getDialogs({ limit: 100 });
+      console.log("[Telegram Init] GramJS entity cache warmed up successfully!");
+    } catch (dialogsErr) {
+      console.warn("[Telegram Init] Failed to pre-fetch dialogs:", dialogsErr.message || dialogsErr.toString());
+    }
   } catch (err) {
     console.error("FATAL: Failed to connect to Telegram client:", err);
     tgClient = null;
@@ -323,6 +332,15 @@ app.post("/telegram/login/verify", async (req, res) => {
     // Save to global variables in memory
     sessionString = newSessionString;
     tgClient = client;
+
+    // Warm up GramJS entity cache via getDialogs
+    try {
+      console.log("[Verify Login] Warming up GramJS entity cache via getDialogs...");
+      await tgClient.getDialogs({ limit: 100 });
+      console.log("[Verify Login] GramJS entity cache warmed up successfully!");
+    } catch (dialogsErr) {
+      console.warn("[Verify Login] Failed to pre-fetch dialogs:", dialogsErr.message || dialogsErr.toString());
+    }
 
     // Persist session to Supabase database for Render ephemeral storage persistence
     if (supabase) {
@@ -1246,17 +1264,55 @@ app.post("/scanner/trigger", async (req, res) => {
 });
 
 // Get dynamically configured Telegram channels
-app.get("/scanner/channels", (req, res) => {
+app.get("/scanner/channels", async (req, res) => {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("telegram_channels")
+        .select("*")
+        .order("created_at", { ascending: true });
+      if (!error && data && data.length > 0) {
+        const channels = data.map(c => ({ id: c.id, type: c.type, name: c.name }));
+        return res.json({ channels });
+      }
+    } catch (err) {
+      console.error("[Get Channels] Supabase fetch error:", err.message || err.toString());
+    }
+  }
   res.json({ channels: getDynamicChannels() });
 });
 
 // Update dynamically configured Telegram channels
-app.post("/scanner/channels", (req, res) => {
+app.post("/scanner/channels", async (req, res) => {
   const { channels } = req.body;
   if (!channels || !Array.isArray(channels)) {
     return res.status(400).json({ error: "Parameter 'channels' must be an array." });
   }
+
+  // Backup in-memory state
   setDynamicChannels(channels);
+
+  if (supabase) {
+    try {
+      // Delete existing channels to overwrite
+      await supabase.from("telegram_channels").delete().neq("id", "dummy");
+      
+      if (channels.length > 0) {
+        const rows = channels.map(c => ({
+          id: c.id.toString(),
+          type: c.type,
+          name: c.name,
+          created_at: new Date().toISOString()
+        }));
+        const { error } = await supabase.from("telegram_channels").insert(rows);
+        if (error) throw error;
+      }
+      console.log("[Update Channels] Successfully updated channels in Supabase.");
+    } catch (err) {
+      console.error("[Update Channels] Supabase save error:", err.message || err.toString());
+    }
+  }
+
   res.json({ message: "Dynamic channels updated successfully", channels: getDynamicChannels() });
 });
 
@@ -1606,12 +1662,38 @@ app.post("/telegram/channels", async (req, res) => {
     scannerService.setDynamicChannels(channels);
 
     // Save channels to channels.json for persistent backend restarts
-    const fs = require("fs");
-    const path = require("path");
-    const channelsJsonPath = path.join(__dirname, "./channels.json");
-    fs.writeFileSync(channelsJsonPath, JSON.stringify(channels, null, 2), "utf8");
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      const channelsJsonPath = path.join(__dirname, "./channels.json");
+      fs.writeFileSync(channelsJsonPath, JSON.stringify(channels, null, 2), "utf8");
+    } catch (fsErr) {
+      console.warn("[Save Channels] Failed to write local channels.json backup:", fsErr.message);
+    }
 
-    res.json({ success: true, message: "Channel configurations synced successfully." });
+    // Save to Supabase for stateless container persistence
+    if (supabase) {
+      try {
+        // Delete existing channels to overwrite
+        await supabase.from("telegram_channels").delete().neq("id", "dummy");
+        
+        if (channels.length > 0) {
+          const rows = channels.map(c => ({
+            id: c.id.toString(),
+            type: c.type,
+            name: c.name,
+            created_at: new Date().toISOString()
+          }));
+          const { error } = await supabase.from("telegram_channels").insert(rows);
+          if (error) throw error;
+        }
+        console.log("[Save Channels] Successfully updated channels in Supabase.");
+      } catch (dbErr) {
+        console.error("[Save Channels] Supabase save error:", dbErr.message || dbErr.toString());
+      }
+    }
+
+    res.json({ success: true, message: "Channel configurations synced successfully.", channels: scannerService.getDynamicChannels() });
   } catch (err) {
     console.error("Save channel configurations error:", err);
     res.status(500).json({ success: false, error: err.toString() });

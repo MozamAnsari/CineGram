@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS public.telegram_sessions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
+-- 6. TELEGRAM CHANNELS TABLE (Dynamic channel sources persistence)
+CREATE TABLE IF NOT EXISTS public.telegram_channels (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL CHECK (type IN ('movie', 'tv', 'anime')),
+    name TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
 -- Enable Row Level Security (RLS) on all tables for security
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 -- ALTER TABLE public.media_listings ENABLE ROW LEVEL SECURITY;
@@ -63,6 +71,7 @@ ALTER TABLE public.media_listings DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.watch_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookmarks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.telegram_sessions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.telegram_channels DISABLE ROW LEVEL SECURITY;
 
 -- ----------------------------------------------------
 -- Row Level Security (RLS) Policies
@@ -96,4 +105,10 @@ CREATE POLICY "Allow anyone to read telegram sessions" ON public.telegram_sessio
 CREATE POLICY "Allow anyone to insert telegram sessions" ON public.telegram_sessions FOR INSERT WITH CHECK (true);
 CREATE POLICY "Allow anyone to update telegram sessions" ON public.telegram_sessions FOR UPDATE USING (true);
 CREATE POLICY "Allow anyone to delete telegram sessions" ON public.telegram_sessions FOR DELETE USING (true);
+
+-- Telegram Channels Policies (Dynamic channel sources persistence)
+CREATE POLICY "Allow anyone to read telegram channels" ON public.telegram_channels FOR SELECT USING (true);
+CREATE POLICY "Allow anyone to insert telegram channels" ON public.telegram_channels FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow anyone to update telegram channels" ON public.telegram_channels FOR UPDATE USING (true);
+CREATE POLICY "Allow anyone to delete telegram channels" ON public.telegram_channels FOR DELETE USING (true);
 

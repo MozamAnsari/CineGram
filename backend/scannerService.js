@@ -175,6 +175,31 @@ async function runScan(tgClient, supabase, targetChannelId) {
   scannerState.active = true;
   scannerState.lastRun = new Date().toISOString();
 
+  // Warm up GramJS entity cache by fetching dialogs
+  if (tgClient && tgClient.connected) {
+    try {
+      console.log("[Scanner] Warming up GramJS entity cache via getDialogs...");
+      await tgClient.getDialogs({ limit: 100 });
+      console.log("[Scanner] GramJS entity cache warmed up successfully!");
+    } catch (dialogsErr) {
+      console.warn("[Scanner] Failed to fetch dialogs for cache warmup:", dialogsErr.message || dialogsErr.toString());
+    }
+  }
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("telegram_channels")
+        .select("*");
+      if (!error && data && data.length > 0) {
+        dynamicChannels = data.map(c => ({ id: c.id, type: c.type, name: c.name }));
+        console.log(`[Scanner] Loaded ${dynamicChannels.length} channels from Supabase database.`);
+      }
+    } catch (dbErr) {
+      console.warn("[Scanner] Failed to fetch channels from Supabase (falling back to memory):", dbErr.message || dbErr.toString());
+    }
+  }
+
   let channelsToScan = [];
   if (targetChannelId) {
     const matched = dynamicChannels.find(c => c.id.toString() === targetChannelId.toString());

@@ -83,6 +83,7 @@ jest.mock("telegram", () => {
 let mockListings = [];
 let mockWatchHistory = [];
 let mockBookmarks = [];
+let mockChannels = [];
 
 jest.mock("@supabase/supabase-js", () => ({
   createClient: jest.fn(() => ({
@@ -214,6 +215,13 @@ jest.mock("@supabase/supabase-js", () => ({
             };
             mockBookmarks.push(newRec);
             inserted.push(newRec);
+          } else if (table === "telegram_channels") {
+            const newRec = {
+              ...rec,
+              created_at: rec.created_at || new Date().toISOString(),
+            };
+            mockChannels.push(newRec);
+            inserted.push(newRec);
           }
         }
 
@@ -233,6 +241,12 @@ jest.mock("@supabase/supabase-js", () => ({
         tableChain.eq = jest.fn((col, val) => {
           if (table === "bookmarks" && col === "id") {
             mockBookmarks = mockBookmarks.filter((b) => b.id !== val);
+          }
+          return tableChain;
+        });
+        tableChain.neq = jest.fn((col, val) => {
+          if (table === "telegram_channels") {
+            mockChannels = mockChannels.filter((c) => c[col] !== val);
           }
           return tableChain;
         });
@@ -275,6 +289,7 @@ function mockApplyFilters(table, eqQuery = []) {
   if (table === "media_listings") list = [...mockListings];
   else if (table === "watch_history") list = [...mockWatchHistory];
   else if (table === "bookmarks") list = [...mockBookmarks];
+  else if (table === "telegram_channels") list = [...mockChannels];
 
   if (!eqQuery || eqQuery.length === 0) return list;
 
@@ -312,6 +327,7 @@ describe("Cinegram Backend API Integration Tests", () => {
     mockListings = [];
     mockWatchHistory = [];
     mockBookmarks = [];
+    mockChannels = [];
 
     // Reset Fetch Mock
     global.fetch.mockReset();
