@@ -21,6 +21,8 @@ const generateId = () => crypto.randomUUID ? crypto.randomUUID() : Math.random()
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.set("trust proxy", 1); // Allow rate limiter to identify users behind reverse proxies
+
 app.use(cors({
   origin: "*",
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
