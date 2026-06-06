@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -22,7 +24,7 @@ android {
             useSupportLibrary = true
         }
 
-        val localProperties = java.util.Properties()
+        val localProperties = Properties()
         val localPropertiesFile = project.rootProject.file("local.properties")
         if (localPropertiesFile.exists()) {
             localPropertiesFile.inputStream().use { localProperties.load(it) }
@@ -86,7 +88,7 @@ dependencies {
     // Hilt
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
-    implementation(libs.androidx.hilt.navigation-compose)
+    implementation(libs.androidx.hilt.navigation.compose)
 
     // Media3 (ExoPlayer)
     implementation(libs.androidx.media3.exoplayer)
@@ -100,14 +102,14 @@ dependencies {
     implementation(libs.coil.compose)
 
     // Coroutines
-    implementation(libs.kotlinx-coroutines-android)
+    implementation(libs.kotlinx.coroutines.android)
 
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test-junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.test-manifest)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
