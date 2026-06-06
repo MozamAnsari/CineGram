@@ -3,7 +3,7 @@ on: [push]
 
 jobs:
   build:
-    name: Compile Release APK
+    name: Compile Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -16,24 +16,19 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - name: Create local.properties
+        run: echo "tmdb.api.key=dummy_key_for_ci" > local.properties
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
         with:
-          channel: 'stable'
-          cache: false
+          gradle-version: '8.7'
 
-      - name: Install Dependencies
-        run: |
-          rm -f pubspec.lock
-          flutter pub get
-        working-directory: frontend
-
-      - name: Build Release APK
-        run: flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
-        working-directory: frontend
+      - name: Build Debug APK
+        run: gradle :app:assembleDebug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cinegram-release-apk
-          path: frontend/build/app/outputs/flutter-apk/app-release.apk
+          name: cinegram-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
